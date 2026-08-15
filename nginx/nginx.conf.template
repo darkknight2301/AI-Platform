@@ -1,0 +1,126 @@
+# Nginx reverse proxy template — Phase 1 foundation.
+#
+# No real domains or TLS certificates are configured here; an operator
+# must fill those in per environment (development/staging/production).
+# Business logic must never live in this file — it only routes traffic.
+#
+# Placeholders to replace at deploy time:
+#   __SERVER_NAME__      e.g. app.example.com
+#   __SSL_CERT_PATH__    path to fullchain.pem (staging/production only)
+#   __SSL_KEY_PATH__     path to privkey.pem   (staging/production only)
+
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    # Assumes this file is deployed as /etc/nginx/nginx.conf (or included
+    # from a location alongside the standard mime.types file). Adjust the
+    # path if using a non-standard nginx install layout.
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    keepalive_timeout 65;
+
+    # Reasonable default; the app enforces its own limits too.
+    client_max_body_size 10m;
+
+    # Basic security headers. Business-specific CSP, if needed, should
+    # be defined per-frontend, not hardcoded globally here.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    upstream python_api {
+        # Multiple backend instances can be added here for horizontal
+        # scaling of the stateless API layer.
+        server 127.0.0.1:8000;
+        keepalive 32;
+    }
+
+    # ---------------------------------------------------------------
+    # HTTP server — redirect to HTTPS in staging/production.
+    # In local development, TLS is typically terminated elsewhere
+    # (or not at all), so this block alone is sufficient there.
+    # ---------------------------------------------------------------
+    server {
+        listen 80;
+        server_name __SERVER_NAME__;
+
+        # Uncomment in staging/production once certificates exist:
+        # return 301 https://$host$request_uri;
+
+        location /api/ {
+            proxy_pass http://python_api;
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Streaming / Server-Sent Events support: disable buffering
+            # so chunks reach the client as the backend produces them.
+            proxy_buffering off;
+            proxy_cache off;
+
+            # WebSocket upgrade support.
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+
+            # Long-lived streaming responses need generous timeouts;
+            # tune per deployment/model latency characteristics.
+            proxy_connect_timeout 10s;
+            proxy_send_timeout 300s;
+            proxy_read_timeout 300s;
+        }
+
+        # Health check passthrough — used by load balancers/orchestrators.
+        location = /healthz {
+            proxy_pass http://python_api/api/v1/health;
+            proxy_set_header Host $host;
+        }
+
+        # Frontend static assets (built SPA).
+        location / {
+            root /var/www/frontend/dist;
+            try_files $uri $uri/ /index.html;
+        }
+    }
+
+    # ---------------------------------------------------------------
+    # HTTPS server — staging/production only. Uncomment and supply
+    # real certificate paths at deploy time.
+    # ---------------------------------------------------------------
+    # server {
+    #     listen 443 ssl http2;
+    #     server_name __SERVER_NAME__;
+    #
+    #     ssl_certificate     __SSL_CERT_PATH__;
+    #     ssl_certificate_key __SSL_KEY_PATH__;
+    #     ssl_protocols       TLSv1.2 TLSv1.3;
+    #
+    #     location /api/ {
+    #         proxy_pass http://python_api;
+    #         proxy_http_version 1.1;
+    #         proxy_set_header Host $host;
+    #         proxy_set_header X-Real-IP $remote_addr;
+    #         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #         proxy_set_header X-Forwarded-Proto $scheme;
+    #         proxy_buffering off;
+    #         proxy_set_header Upgrade $http_upgrade;
+    #         proxy_set_header Connection "upgrade";
+    #         proxy_connect_timeout 10s;
+    #         proxy_send_timeout 300s;
+    #         proxy_read_timeout 300s;
+    #     }
+    #
+    #     location / {
+    #         root /var/www/frontend/dist;
+    #         try_files $uri $uri/ /index.html;
+    #     }
+    # }
+}
