@@ -65,13 +65,23 @@ combined with credentialed requests must not be used in production.
 
 ## Current Scope
 
-As of Phase 1:
+As of Phase 2:
 
-- No authentication or authorization logic is implemented yet
+- No authentication or authorization *logic* is implemented yet
   (`backend/src/auth/` is a structural placeholder). There are
   currently no protected endpoints — only the public health check.
-- No user data or business data is stored yet (no ORM models exist
-  beyond the shared declarative base).
+- The database schema now exists (`users`, `groups`, `chats`,
+  `messages`, `models`, `usage_records`, `audit_logs`), but nothing
+  reads or writes it from the API yet — no business endpoints exist.
+- `users.password_hash` is a plain string column; no hashing routine
+  is implemented yet. When authentication is added, this column must
+  only ever be written via a proper password-hashing function
+  (bcrypt/argon2) — never a plaintext or reversibly-encrypted value.
+- The `audit_logs` table exists so that, once actions exist to audit,
+  entries can be written from day one rather than retrofitted later.
+  Its `audit_metadata` JSON field must never be used to store secrets
+  or tokens (see "No secrets are logged" above — the same rule applies
+  to structured audit data).
 - No model backend is integrated yet, so there is no model-facing
   attack surface yet.
 

@@ -188,6 +188,117 @@ via environment variables per deployment target
 (development/staging/production); nothing environment-specific is
 hardcoded in application code.
 
+## Data Model
+
+Established in Phase 2. All tables live under `src/models/`, one
+module per entity, registered on the shared `Base` declarative base
+(`src/db/base.py`) and versioned through Alembic migrations
+(`alembic/versions/`).
+
+### Entity-Relationship Overview
+
+```text
+Group  1───N  User  1───N  Chat  N───1  AIModel
+                       │           │
+                       │           └──1───N Chat (a model can back many chats)
+                       │
+                       └──N  AuditLog (actor, nullable — system actions have no actor)
+                       │
+                       └──N  Usage
+                                │
+Chat  1───N  Message  1───(0/1)─ Usage (a usage record may reference the message that produced it)
+Chat  1───N  Usage
+AIModel  1───N  Usage
+```
+
+- **Group → User**: one-to-many. `users.group_id` is nullable
+  (`ON DELETE SET NULL`) — a user can exist without a group, and
+  deleting a group does not delete its members.
+- **User → Chat**: one-to-many, `ON DELETE CASCADE` — deleting a user
+  removes their chats (and, transitively, their messages).
+- **AIModel → Chat**: one-to-many, `ON DELETE RESTRICT` — a model that
+  is in use by any chat cannot be deleted (disable it via
+  `is_enabled` instead).
+- **Chat → Message**: one-to-many, `ON DELETE CASCADE`.
+- **Usage**: references `user`, `model` (both required), and
+  optionally `chat`/`message` (`ON DELETE SET NULL`) — usage records
+  are accounting data and are kept even if the chat/message they
+  originated from is later removed.
+- **AuditLog**: references `actor_user_id` only, as a nullable,
+  `ON DELETE SET NULL` foreign key — audit entries must outlive the
+  user account they're about, and some actions are system-initiated
+  with no human actor at all. `target_type`/`target_id` are plain
+  strings (not foreign keys) for the same reason: the audited target
+  may no longer exist.
+
+### Roles
+
+`Role` (`USER`, `MANAGER`, `DEVELOPER`, `OWNER`) is stored as a single
+column on `users`, not a separate permissions table. It's deliberately
+just an ordered set of values (`ROLE_RANK` in `src/models/enums.py`
+gives each a numeric rank) so that a future, single, central
+authorization utility can compare rank (`ROLE_RANK[user.role] >=
+ROLE_RANK[Role.MANAGER]`) instead of every endpoint hardcoding
+`if role == "..."` checks. No such utility is implemented yet — Phase
+2 only establishes the data shape it will sit on top of.
+
+### Enum Storage Strategy
+
+All enum-like columns (`role`, `status` fields, `category`, etc.) are
+stored as `VARCHAR` with a database-level `CHECK` constraint
+(`native_enum=False, create_constraint=True` in SQLAlchemy), rather
+than native PostgreSQL `ENUM` types. This means:
+
+- The exact same schema works against SQLite, which has no enum type —
+  useful for fast local/unit test runs.
+- Adding a new value later is a normal migration, not PostgreSQL's
+  transaction-restricted `ALTER TYPE ... ADD VALUE`.
+- Invalid values are still rejected at the database layer, not just
+  in application code.
+
+### Token Accounting
+
+Both `messages` and `usage_records` store `input_tokens`,
+`output_tokens`, and `total_tokens`, each with `CHECK` constraints
+enforcing non-negative values and `total_tokens = input_tokens +
+output_tokens`. `usage_records` is intentionally denormalized (it
+duplicates `user_id`/`chat_id` rather than requiring a join through
+`messages`) because usage/quota reporting is expected to be a frequent
+query pattern at 500+ users and should not require joining through
+every message.
+
+### Indexing for Expected Query Patterns (500+ users)
+
+| Pattern | Index |
+|---|---|
+| "My recent chats" | `chats(user_id, updated_at)` |
+| "My active/archived chats" | `chats(user_id, status)` |
+| "Messages in a chat, in order" | `messages(chat_id, created_at)` |
+| "My usage over time" / quota checks | `usage_records(user_id, timestamp)` |
+| "Usage by model" (capacity planning) | `usage_records(model_id, timestamp)` |
+| "Usage for a specific chat" | `usage_records(chat_id, timestamp)` |
+| "Audit trail for a user" | `audit_logs(actor_user_id, timestamp)` |
+| "Audit trail for a specific target" | `audit_logs(target_type, target_id)` |
+| Login/lookup by identifier | unique indexes on `users.username`, `users.email` |
+
+### Primary Keys
+
+All tables use UUID surrogate primary keys (`sqlalchemy.Uuid`,
+generated client-side via `uuid.uuid4()`), so IDs are safe to expose
+in API responses/URLs without leaking sequential volume information
+(e.g. total user or message count), and can be generated before an
+insert if a future feature needs that (e.g. optimistic client-side
+creation).
+
+### Not Yet Implemented
+
+No authentication or authorization *logic* exists yet — only the
+supporting columns (`password_hash`, `status`, `role`) and the `Role`
+enum. No model provider is wired to the `models` table's rows yet
+(that's `src/model_layer/`, still a placeholder per ADR 0002). See
+`docs/adr/0005-data-model-design.md` for the detailed rationale behind
+these choices.
+
 ## Security Boundaries
 
 See `SECURITY.md` for the full security model. In summary: all

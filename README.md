@@ -15,7 +15,7 @@ model-independence design and `docs/adr/` for key decisions.
 │   │   ├── api/         Route definitions (versioned under v1/)
 │   │   ├── services/     Business logic (empty — Phase 2+)
 │   │   ├── repositories/ Data access layer (empty — Phase 2+)
-│   │   ├── models/       SQLAlchemy ORM models (empty — Phase 2+)
+│   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs)
 │   │   ├── schemas/      Pydantic request/response schemas
 │   │   ├── auth/         Authentication/authorization (placeholder — Phase 2+)
 │   │   ├── core/         Config, logging
@@ -60,7 +60,8 @@ pip install -r requirements-dev.txt
 cp .env.example .env
 # Edit .env: set SECRET_KEY and DATABASE_URL for your local Postgres instance.
 
-# Run database migrations (once models exist, from Phase 2 onward)
+# Create the database (once) and apply migrations
+createdb app_db   # or: psql -c "CREATE DATABASE app_db;"
 alembic upgrade head
 
 # Start the API
@@ -70,6 +71,21 @@ PYTHONPATH=. uvicorn src.main:app --reload
 The API is served at `http://localhost:8000`. Interactive docs are
 available at `/docs` and `/redoc` in non-production environments.
 
+### Database & Migrations
+
+The schema (users, groups, chats, messages, models, usage records,
+audit logs — see `ARCHITECTURE.md` for the full entity-relationship
+description) is managed entirely through Alembic. `alembic/env.py`
+reads the connection string from application settings, so migrations
+always target whichever `DATABASE_URL` is active.
+
+```bash
+cd backend
+alembic upgrade head          # apply all migrations
+alembic downgrade base        # roll back to an empty schema
+alembic revision --autogenerate -m "describe your change"  # after editing src/models/
+```
+
 ### Running Tests
 
 ```bash
@@ -77,9 +93,20 @@ cd backend
 PYTHONPATH=. pytest -v
 ```
 
-Tests run against an in-memory SQLite database by default (configured
-in `tests/conftest.py`) so they don't require a live PostgreSQL
-instance. Production and staging always use PostgreSQL.
+Most tests (health check, config, model-metadata checks) run against
+an in-memory SQLite database by default (configured in
+`tests/conftest.py`) so they don't require a live PostgreSQL instance.
+
+The relational/constraint test suite
+(`tests/integration/test_data_model.py`) exercises the schema against
+a **real PostgreSQL database**, since CHECK constraints and FK
+`ON DELETE` behavior are exactly the kind of thing that can silently
+differ between database backends. Point it at a disposable database via
+`TEST_DATABASE_URL` (defaults to
+`postgresql+asyncpg://app_user:app_password@localhost:5432/app_db`); if
+that database isn't reachable, set `SKIP_PG_TESTS=1` to skip those
+tests rather than fail the run. Production and staging always use
+PostgreSQL — SQLite is a test/local-dev convenience only.
 
 ## Frontend — Local Setup
 
@@ -119,13 +146,18 @@ file with real values.
 ## Project Status
 
 **Phase 1 — Foundation and Architecture: complete.**
+**Phase 2 — Database and Data Model: complete.**
 
 Implemented: project structure, environment-driven configuration,
-database engine/session setup, Alembic migrations scaffold, structured
-logging, health check endpoint with automated test, Nginx template,
-minimal frontend, documentation.
+database engine/session setup, structured logging, health check
+endpoint, Nginx template, minimal frontend, documentation, and the
+full relational data model (users, groups, chats, messages, models,
+usage records, audit logs) with Alembic migrations, foreign keys,
+indexes tuned for expected query patterns, and CHECK constraints that
+reject invalid data at the database level.
 
 Not yet implemented (by design — later phases): authentication/
-authorization logic, database models/business tables, model provider
-implementations, chat functionality, background workers, rate
-limiting enforcement.
+authorization logic (password verification, sessions/tokens,
+permission enforcement — only the supporting columns and `Role` enum
+exist so far), model provider implementations, chat/business-logic
+endpoints, background workers, rate limiting enforcement.

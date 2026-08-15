@@ -18,11 +18,10 @@ from alembic import context
 # Make `src` importable when alembic is run from the backend/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Import every model so autogenerate can see the full schema.
+import src.models  # noqa: E402,F401
 from src.core.config import get_settings  # noqa: E402
 from src.db.base import Base  # noqa: E402
-
-# Import model modules here so autogenerate can see them, e.g.:
-# from src.models import user  # noqa: F401
 
 config = context.config
 settings = get_settings()
