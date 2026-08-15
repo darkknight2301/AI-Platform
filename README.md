@@ -22,7 +22,7 @@ model-independence design and `docs/adr/` for key decisions.
 │   │   ├── auth/         dependencies.py — authentication + RBAC enforcement
 │   │   ├── core/         Config, logging
 │   │   ├── db/           Engine/session, declarative base
-│   │   ├── model_layer/  Model provider abstraction (placeholder — later phase)
+│   │   ├── model_layer/  ModelRegistry, ModelRouter, ModelProvider interface, mock provider (no real provider yet)
 │   │   ├── workers/       Background workers (empty — later phase)
 │   │   └── main.py        FastAPI application entrypoint
 │   ├── alembic/           Database migrations
@@ -154,20 +154,20 @@ file with real values.
 **Phase 1 — Foundation and Architecture: complete.**
 **Phase 2 — Database and Data Model: complete.**
 **Phase 3 — Authentication and RBAC: complete.**
+**Phase 4 — Model Abstraction and Registry: complete.**
 
 Implemented: project structure, environment-driven configuration,
 database engine/session setup, structured logging, health check
 endpoint, Nginx template, minimal frontend, documentation, the full
-relational data model with Alembic migrations, and — as of Phase 3 —
-registration with manager-approval workflow, login/logout with
-revocable JWT sessions, bcrypt password hashing, per-request account
-status checking, and role-based authorization (User/Manager/Developer/
-Owner) enforced via a single shared dependency layer
-(`src/auth/dependencies.py`). See `ARCHITECTURE.md`'s "Authentication
-and Authorization" section for the endpoint map and role capability
-table.
+relational data model with Alembic migrations, registration with
+manager-approval workflow, login/logout with revocable JWT sessions,
+role-based authorization, and — as of Phase 4 — the full model
+abstraction layer (`ModelRegistry`, `ModelRouter`, `ModelProvider`
+interface, and a working `MockProvider`) with `ChatService` proven to
+talk to a provider through the router alone. See `ARCHITECTURE.md`'s
+"Model Abstraction Layer" section and ADR 0007.
 
-Not yet implemented (by design — later phases): model provider
-implementations, chat/message business-logic endpoints (the schema
-exists; no create-chat/send-message API yet), background workers,
-rate limiting enforcement, password reset flow.
+Not yet implemented (by design — later phases): a real (Qwen) model
+provider, chat/message business-logic endpoints (the schema and
+model-layer plumbing exist; no create-chat/send-message HTTP API yet),
+background workers, rate limiting enforcement, password reset flow.

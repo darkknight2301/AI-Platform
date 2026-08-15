@@ -1,7 +1,9 @@
 # 0002 — Isolate model backends behind a provider abstraction
 
 ## Status
-Accepted (interface design only — no implementation yet)
+Accepted; implemented in Phase 4 — see ADR 0007 for the concrete
+design (registry/router/provider interface, mock provider) that
+fulfills this decision. This ADR remains as the original rationale.
 
 ## Context
 The application must support multiple model backends and must not

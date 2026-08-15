@@ -1,23 +1,31 @@
 # Model Layer
 
-This package is reserved for the model-independence abstraction
-described in ARCHITECTURE.md:
+The model-independence abstraction described in ARCHITECTURE.md:
 
 ```text
 Model Registry -> Model Router -> Model Provider Interface -> {Coder Provider, NLP Provider} -> Qwen
 ```
 
-**Status:** structural placeholder only. Per Phase 1 scope control, no
-model-specific (Qwen) implementation or chat functionality is
-introduced yet. This directory exists so the eventual provider
-abstraction has a clear home and later phases don't need to restructure
-the codebase.
+**Status (Phase 4):** the abstraction itself is implemented —
+`ModelRequest`/`ModelResponse`/`StreamingChunk`/`ModelCapabilities`
+(`schemas.py`), the `ModelProvider` interface
+(`provider_interface.py`), `ModelRegistry` (`registry.py`),
+`ModelRouter` (`router.py`), and a fully working `MockProvider`
+(`providers/mock_provider.py`) used to prove the seam end-to-end (see
+`tests/unit/test_model_layer.py` and
+`tests/unit/test_chat_service.py`). `src/services/chat_service.py`
+consumes only `ModelRouter` — it has no dependency on any concrete
+provider.
 
-Planned contents (future phases):
+**No real (Qwen) provider is implemented yet** — per Phase 4 scope
+("not to download models, just add placeholder if required"). Adding
+one later means:
 
-- `registry.py` — maps logical model names to providers.
-- `router.py` — selects a provider/model for a given request.
-- `provider_interface.py` — abstract base class all providers implement.
-- `providers/` — concrete providers (e.g. Qwen Coder, Qwen NLP), fully
-  isolated behind the interface so the application never depends on a
-  specific model implementation.
+1. A new file in `providers/` implementing `ModelProvider`
+   (`generate`, `stream`, `capabilities`, `health_check`).
+2. One `registry.register(...)` call wiring `model_key -> provider
+   instance` — typically done once at process startup.
+
+No changes to `ModelRouter`, `ChatService`, or any router/schema in
+this package are required — that's the whole point of the interface.
+See ADR 0007 for the full design rationale.

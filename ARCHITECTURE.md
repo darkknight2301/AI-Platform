@@ -41,8 +41,8 @@ phases will build on.
 - **Workers** handle background/asynchronous processing so long-running
   work (e.g. model inference) doesn't block request/response cycles.
 - **Model Layer** abstracts away any specific model implementation
-  (see "Model Independence" below). No model provider is implemented
-  yet as of Phase 1.
+  (see "Model Independence" below). As of Phase 4 the abstraction is
+  implemented; no real (Qwen) model provider is implemented yet.
 
 ## Technology Choices
 
@@ -137,9 +137,11 @@ Qwen        Qwen
 
 This means adding a new model or swapping a provider requires writing
 a new provider implementation, not rewriting the chat system or any
-code that consumes the model layer. As of Phase 1, this layer exists
-only as a documented placeholder (`src/model_layer/README.md`) — no
-provider is implemented yet, per Phase 1 scope control.
+code that consumes the model layer. As of Phase 4, this abstraction is
+implemented in full (`src/model_layer/`) with a working mock provider
+proving the seam end-to-end — see the "Model Abstraction Layer"
+section below and ADR 0007 for the concrete design. No real (Qwen)
+provider is implemented yet.
 
 ## Scalability Considerations (500+ users)
 
@@ -416,6 +418,50 @@ propagates, via `X-Request-ID`) a request ID to every request, echoed
 back in the response header and threaded through to `AuditLog.request_id`
 and application logs — so a single request's audit trail and log
 lines can be correlated.
+
+## Model Abstraction Layer
+
+Established in Phase 4 (the abstraction itself — no real model backend
+is integrated yet; see ADR 0007 for full rationale).
+
+```text
+ChatService -> ModelRouter -> ModelRegistry -> ModelProvider -> concrete provider (e.g. MockProvider)
+```
+
+- **`ChatService`** (`src/services/chat_service.py`) — the chat
+  system's only entry point into the model layer. Depends solely on
+  `ModelRouter`; has no knowledge of `ModelRegistry` or any concrete
+  provider.
+- **`ModelRouter`** (`src/model_layer/router.py`) — resolves a
+  `model_key` (or a `ModelCategory`, for "any enabled CODER model"
+  -style requests) to a live `ModelProvider`, raising a typed error
+  (`ModelNotFoundError`, `ModelUnavailableError`,
+  `NoProviderForCategoryError`) if it can't.
+- **`ModelRegistry`** (`src/model_layer/registry.py`) — in-memory,
+  process-local index of `model_key -> ModelRegistration`
+  (register/enable/disable/get/list/check_availability/get_capabilities).
+  **Not** the same thing as the `models` database table (`AIModel`,
+  Phase 2/3): the table is the durable, Owner-editable record of which
+  models are configured to exist; the registry is the runtime index
+  mapping each one's key to a live provider instance. See ADR 0007.
+- **`ModelProvider`** (`src/model_layer/provider_interface.py`) — the
+  interface every concrete provider implements: `generate`, `stream`,
+  `capabilities`, `health_check`. Nothing above this interface may
+  import a concrete provider class directly.
+- **Domain schemas** (`src/model_layer/schemas.py`) — `ModelRequest`,
+  `ModelResponse`, `StreamingChunk`, `ModelCapabilities` are the only
+  objects that cross any boundary in this stack; provider-specific
+  tuning goes in `ModelRequest.options` (an open dict), not new schema
+  fields.
+- **`MockProvider`** (`src/model_layer/providers/mock_provider.py`) —
+  a complete, dependency-free `ModelProvider` implementation used to
+  prove the whole stack end-to-end and as the template for a future
+  real (Qwen) provider.
+
+Adding a real provider later is a new file in `providers/`
+implementing `ModelProvider`, plus one `registry.register(...)` call —
+no changes to `ModelRouter`, `ChatService`, or any schema in this
+package.
 
 ## Security Boundaries
 
