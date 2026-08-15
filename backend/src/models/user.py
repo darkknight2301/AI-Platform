@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin
@@ -14,6 +14,7 @@ from src.models.enums import Role, UserStatus
 
 if TYPE_CHECKING:
     from src.models.audit_log import AuditLog
+    from src.models.auth_session import AuthSession
     from src.models.chat import Chat
     from src.models.group import Group
     from src.models.usage import Usage
@@ -35,13 +36,18 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    last_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     group: Mapped[Group | None] = relationship(back_populates="users")
     chats: Mapped[list[Chat]] = relationship(back_populates="user", cascade="all, delete-orphan")
     usage_records: Mapped[list[Usage]] = relationship(back_populates="user")
     audit_logs: Mapped[list[AuditLog]] = relationship(
         back_populates="actor", foreign_keys="AuditLog.actor_user_id"
+    )
+    auth_sessions: Mapped[list[AuthSession]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper

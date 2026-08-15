@@ -11,3 +11,4 @@ way it does, not just what it looks like.
 | [0003](./0003-postgresql-with-sqlalchemy-alembic.md) | Use PostgreSQL with SQLAlchemy (async) and Alembic |
 | [0004](./0004-vite-typescript-frontend.md) | Use a minimal Vite/TypeScript frontend for the foundation phase |
 | [0005](./0005-data-model-design.md) | Data model design: UUID keys, portable enums, denormalized usage accounting |
+| [0006](./0006-registration-group-assignment-policy.md) | Registration group-assignment policy |

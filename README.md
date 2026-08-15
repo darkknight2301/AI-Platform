@@ -13,11 +13,13 @@ model-independence design and `docs/adr/` for key decisions.
 ├── backend/            Python/FastAPI application
 │   ├── src/
 │   │   ├── api/         Route definitions (versioned under v1/)
-│   │   ├── services/     Business logic (empty — Phase 2+)
-│   │   ├── repositories/ Data access layer (empty — Phase 2+)
-│   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs)
+│   │   ├── api/
+│   │   │   └── v1/routers/  auth.py, users.py, system.py, admin.py, health.py
+│   │   ├── services/     business logic (auth_service, user_service)
+│   │   ├── repositories/ data access (user, group, auth_session, audit_log, model, usage)
+│   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs, auth_sessions)
 │   │   ├── schemas/      Pydantic request/response schemas
-│   │   ├── auth/         Authentication/authorization (placeholder — Phase 2+)
+│   │   ├── auth/         dependencies.py — authentication + RBAC enforcement
 │   │   ├── core/         Config, logging
 │   │   ├── db/           Engine/session, declarative base
 │   │   ├── model_layer/  Model provider abstraction (placeholder — later phase)
@@ -97,16 +99,20 @@ Most tests (health check, config, model-metadata checks) run against
 an in-memory SQLite database by default (configured in
 `tests/conftest.py`) so they don't require a live PostgreSQL instance.
 
-The relational/constraint test suite
-(`tests/integration/test_data_model.py`) exercises the schema against
-a **real PostgreSQL database**, since CHECK constraints and FK
-`ON DELETE` behavior are exactly the kind of thing that can silently
-differ between database backends. Point it at a disposable database via
-`TEST_DATABASE_URL` (defaults to
-`postgresql+asyncpg://app_user:app_password@localhost:5432/app_db`); if
-that database isn't reachable, set `SKIP_PG_TESTS=1` to skip those
-tests rather than fail the run. Production and staging always use
-PostgreSQL — SQLite is a test/local-dev convenience only.
+The relational/constraint and authentication/RBAC test suites
+(`tests/integration/test_data_model.py`,
+`tests/integration/test_auth_rbac.py`) exercise the schema and API
+against a **real PostgreSQL database**, since CHECK constraints, FK
+`ON DELETE` behavior, and end-to-end auth flows are exactly the kind
+of thing that can silently differ between database backends or break
+between unit-level mocks and real HTTP dependency injection. Point
+them at a disposable database via `TEST_DATABASE_URL` (defaults to
+`postgresql+asyncpg://app_user:app_password@localhost:5432/app_test_db`
+— **a separate database from the one migrations manage**, since these
+tests drop/recreate the schema on every run); if that database isn't
+reachable, set `SKIP_PG_TESTS=1` to skip those tests rather than fail
+the run. Production and staging always use PostgreSQL — SQLite is a
+test/local-dev convenience only.
 
 ## Frontend — Local Setup
 
@@ -147,17 +153,21 @@ file with real values.
 
 **Phase 1 — Foundation and Architecture: complete.**
 **Phase 2 — Database and Data Model: complete.**
+**Phase 3 — Authentication and RBAC: complete.**
 
 Implemented: project structure, environment-driven configuration,
 database engine/session setup, structured logging, health check
-endpoint, Nginx template, minimal frontend, documentation, and the
-full relational data model (users, groups, chats, messages, models,
-usage records, audit logs) with Alembic migrations, foreign keys,
-indexes tuned for expected query patterns, and CHECK constraints that
-reject invalid data at the database level.
+endpoint, Nginx template, minimal frontend, documentation, the full
+relational data model with Alembic migrations, and — as of Phase 3 —
+registration with manager-approval workflow, login/logout with
+revocable JWT sessions, bcrypt password hashing, per-request account
+status checking, and role-based authorization (User/Manager/Developer/
+Owner) enforced via a single shared dependency layer
+(`src/auth/dependencies.py`). See `ARCHITECTURE.md`'s "Authentication
+and Authorization" section for the endpoint map and role capability
+table.
 
-Not yet implemented (by design — later phases): authentication/
-authorization logic (password verification, sessions/tokens,
-permission enforcement — only the supporting columns and `Role` enum
-exist so far), model provider implementations, chat/business-logic
-endpoints, background workers, rate limiting enforcement.
+Not yet implemented (by design — later phases): model provider
+implementations, chat/message business-logic endpoints (the schema
+exists; no create-chat/send-message API yet), background workers,
+rate limiting enforcement, password reset flow.

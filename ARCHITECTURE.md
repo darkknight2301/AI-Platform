@@ -299,6 +299,124 @@ enum. No model provider is wired to the `models` table's rows yet
 `docs/adr/0005-data-model-design.md` for the detailed rationale behind
 these choices.
 
+## Authentication and Authorization
+
+Established in Phase 3. Implemented in `src/core/security.py` (hashing
++ JWT), `src/models/auth_session.py` (revocable sessions),
+`src/auth/dependencies.py` (the single request-level enforcement
+point), `src/services/auth_service.py` /
+`src/services/user_service.py` (business logic), and the
+`auth`/`users`/`system`/`admin` routers.
+
+### Registration → Approval Flow
+
+```text
+Register (POST /api/v1/auth/register)
+   -> status=PENDING, role=USER (always — see ADR 0006)
+   ↓
+Manager approval (POST /api/v1/users/{id}/approve, own group only)
+  or Owner approval (any group)
+   ↓
+Active (can now log in)
+```
+
+Rejection (`POST /api/v1/users/{id}/reject`) sets `status=INACTIVE`
+instead. Every step writes an `AuditLog` entry. See ADR 0006 for the
+full group-assignment policy — in short: `role` is never
+client-settable at registration (there is no `role` field on the
+request schema at all), and requesting a `group_id` only routes the
+pending account to that group's Manager, it grants no privilege.
+
+### Login / Session Handling
+
+Access tokens are JWTs (`HS256`, `SECRET_KEY`), but a JWT's signature
+alone can't be revoked before it expires. Every issued token carries a
+`jti` claim that must match a non-revoked row in `auth_sessions`
+(Phase 3's addition to the schema). `POST /api/v1/auth/logout` revokes
+that row immediately — the same token is rejected on the very next
+request, not just after its natural expiry.
+
+`get_current_user` (the sole authentication dependency; every
+protected route depends on it, directly or via `require_min_role`)
+re-validates on **every request**, not just at login:
+
+```text
+token present -> signature/expiry valid -> session not revoked
+  -> user still exists -> account status == ACTIVE
+```
+
+That last check is why suspending an account takes effect immediately:
+an already-issued, still-unexpired, non-revoked token is rejected the
+moment `user.status` stops being `ACTIVE`.
+
+### Roles
+
+`Role` (`USER < MANAGER < DEVELOPER < OWNER`, see ADR 0005) is enforced
+through exactly two dependency factories in
+`src/auth/dependencies.py`, so no router hardcodes role-name
+comparisons:
+
+- **`require_min_role(role)`** — rank-based threshold, via
+  `ROLE_RANK`. Used where privilege is naturally hierarchical (e.g.
+  approving users requires Manager-or-above; admin endpoints require
+  Owner, which is top-ranked so `require_min_role(Role.OWNER)` also
+  correctly excludes everyone else).
+- **`require_roles(*roles)`** — exact-set membership, for
+  non-hierarchical grants. Not currently used by any route (Developer
+  access is expressed as `require_min_role(Role.DEVELOPER)`, which
+  also — correctly — admits Owner), but kept available for a future
+  case where privilege isn't a simple ordered scale.
+
+Group-scoped checks (Manager-of-own-group) are inherently
+resource-specific and live in `can_manage_group`
+(`src/auth/dependencies.py`), called from `user_service.py` — not
+duplicated per-endpoint.
+
+| Role | Can | Enforced by |
+|---|---|---|
+| User | View/manage own profile, own usage | `is_self_or_owner` |
+| Manager | View users in own group; approve/reject pending users in own group; view own-group usage | `can_manage_group` |
+| Developer | View application logs, model status, diagnostics, performance — **not** other users' data | `require_min_role(Role.DEVELOPER)` on `/system/*`; `/users` list and `/users/{id}` still enforce self-or-Owner-or-Manager-of-group, so Developer gets 403 there |
+| Owner | Manage users (role/status/group), groups, models, global (non-secret) config, audit logs, global usage | `require_min_role(Role.OWNER)` on `/admin/*` |
+
+### Endpoint Map
+
+```text
+POST   /api/v1/auth/register        public
+POST   /api/v1/auth/login           public
+POST   /api/v1/auth/logout          authenticated
+GET    /api/v1/auth/me              authenticated
+
+GET    /api/v1/users/me             authenticated (self)
+GET    /api/v1/users/me/usage       authenticated (self)
+GET    /api/v1/users                Manager (own group) | Owner (all)
+GET    /api/v1/users/groups/{id}/usage   Manager (own group) | Owner (any)
+GET    /api/v1/users/{id}           self | Manager (same group) | Owner
+POST   /api/v1/users/{id}/approve   Manager (own group) | Owner
+POST   /api/v1/users/{id}/reject    Manager (own group) | Owner
+
+GET    /api/v1/system/logs          Developer+
+GET    /api/v1/system/models        Developer+
+GET    /api/v1/system/diagnostics   Developer+
+GET    /api/v1/system/performance   Developer+
+
+GET/POST   /api/v1/admin/groups           Owner
+PATCH      /api/v1/admin/users/{id}       Owner
+GET/POST   /api/v1/admin/models           Owner
+PATCH      /api/v1/admin/models/{id}      Owner
+GET        /api/v1/admin/audit-logs       Owner
+GET        /api/v1/admin/usage            Owner
+GET        /api/v1/admin/config           Owner (non-secret fields only)
+```
+
+### Request Tracing
+
+`RequestIDMiddleware` (`src/core/middleware.py`) assigns (or
+propagates, via `X-Request-ID`) a request ID to every request, echoed
+back in the response header and threaded through to `AuditLog.request_id`
+and application logs — so a single request's audit trail and log
+lines can be correlated.
+
 ## Security Boundaries
 
 See `SECURITY.md` for the full security model. In summary: all

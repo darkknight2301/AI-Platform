@@ -7,6 +7,7 @@ Every model module is imported here so that:
 """
 from src.models.ai_model import AIModel
 from src.models.audit_log import AuditLog
+from src.models.auth_session import AuthSession
 from src.models.chat import Chat
 from src.models.enums import (
     AuditResult,
@@ -26,6 +27,7 @@ __all__ = [
     "AIModel",
     "AuditLog",
     "AuditResult",
+    "AuthSession",
     "Chat",
     "ChatStatus",
     "Group",

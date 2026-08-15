@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.v1.router import api_router
 from src.core.config import get_settings
 from src.core.logging import configure_logging
+from src.core.middleware import PerformanceMiddleware, RequestIDMiddleware
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -49,5 +50,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(PerformanceMiddleware)
+app.add_middleware(RequestIDMiddleware)
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,6 +20,26 @@ from src.core.config import get_settings
 _RESERVED_ATTRS = set(logging.LogRecord(
     name="", level=0, pathname="", lineno=0, msg="", args=(), exc_info=None
 ).__dict__.keys())
+
+# Bounded in-memory ring buffer of recent structured log entries,
+# surfaced to Developer/Owner roles via GET /api/v1/system/logs. Not a
+# durable log store — a real deployment should ship logs to an
+# external aggregator; this exists so the diagnostics endpoint has
+# something real to show without standing up that infrastructure here.
+_RECENT_LOGS_MAXLEN = 500
+recent_log_entries: deque[dict[str, Any]] = deque(maxlen=_RECENT_LOGS_MAXLEN)
+
+
+class RingBufferHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        recent_log_entries.append(
+            {
+                "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            }
+        )
 
 
 class JsonFormatter(logging.Formatter):
@@ -56,6 +77,7 @@ def configure_logging() -> None:
             logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
         )
     root.addHandler(handler)
+    root.addHandler(RingBufferHandler())
 
     # Quiet noisy third-party loggers unless debug is on.
     if not settings.debug:

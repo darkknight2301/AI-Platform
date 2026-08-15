@@ -28,7 +28,7 @@ from src.models.enums import ChatStatus, GroupStatus, MessageRole, ModelCategory
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://app_user:app_password@localhost:5432/app_db",
+    "postgresql+asyncpg://app_user:app_password@localhost:5432/app_test_db",
 )
 
 

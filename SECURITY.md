@@ -1,9 +1,8 @@
 # Security
 
-This document describes the security boundaries established as part
-of the Phase 1 foundation. It will be extended as authentication,
-authorization, and model-facing functionality are implemented in later
-phases.
+This document describes the security boundaries established across
+Phases 1-3. It will be extended as model-facing functionality is
+implemented in later phases.
 
 ## Core Principles
 
@@ -18,9 +17,10 @@ phases.
   (`backend/src/core/logging.py`) logs application events, not request
   bodies or credential material; call sites are responsible for never
   passing secrets into log calls, including authentication tokens.
-- **Passwords are never stored in plaintext.** (No password storage
-  exists yet as of Phase 1; when authentication is implemented, this
-  will use a standard salted hashing algorithm, e.g. bcrypt/argon2.)
+- **Passwords are never stored in plaintext.** Registration hashes
+  every password with bcrypt (`src/core/security.py`) before it
+  touches the database; `verify_password` never compares plaintext to
+  plaintext.
 - **Internal model endpoints are never exposed directly.** All access
   to model backends will go through the Python API and the model
   layer abstraction — never proxied directly to end users or the
@@ -49,10 +49,10 @@ Browser / Frontend  ──HTTP──►  Nginx  ──HTTP──►  Python API 
 - `backend/.env.example` and `frontend/.env.example` enumerate every
   configuration variable an operator must supply. Neither file
   contains real values.
-- `SECRET_KEY` (used for token signing, once authentication is
-  implemented) must be a long, random value, unique per environment,
-  and must never be committed. The `.env.example` file documents how to
-  generate one locally.
+- `SECRET_KEY` (used to sign access tokens, see
+  `src/core/security.py`) must be a long, random value, unique per
+  environment, and must never be committed. The `.env.example` file
+  documents how to generate one locally.
 - Database credentials are supplied via `DATABASE_URL` and are never
   embedded in application code.
 
@@ -65,36 +65,43 @@ combined with credentialed requests must not be used in production.
 
 ## Current Scope
 
-As of Phase 2:
+As of Phase 3:
 
-- No authentication or authorization *logic* is implemented yet
-  (`backend/src/auth/` is a structural placeholder). There are
-  currently no protected endpoints — only the public health check.
-- The database schema now exists (`users`, `groups`, `chats`,
-  `messages`, `models`, `usage_records`, `audit_logs`), but nothing
-  reads or writes it from the API yet — no business endpoints exist.
-- `users.password_hash` is a plain string column; no hashing routine
-  is implemented yet. When authentication is added, this column must
-  only ever be written via a proper password-hashing function
-  (bcrypt/argon2) — never a plaintext or reversibly-encrypted value.
-- The `audit_logs` table exists so that, once actions exist to audit,
-  entries can be written from day one rather than retrofitted later.
-  Its `audit_metadata` JSON field must never be used to store secrets
-  or tokens (see "No secrets are logged" above — the same rule applies
-  to structured audit data).
+- Authentication and role-based authorization are implemented (see
+  ARCHITECTURE.md's "Authentication and Authorization" section).
+  Passwords are hashed with bcrypt (`src/core/security.py`) — never
+  stored or logged in plaintext. Access tokens are JWTs backed by a
+  revocable `auth_sessions` table, so logout and account suspension
+  take effect immediately rather than waiting for token expiry.
+- Every authentication and authorization-relevant action (register,
+  login success/failure/denial, logout, approve/reject, admin
+  changes) writes an `AuditLog` entry — this table is no longer just
+  schema, it's actively written to.
+- Role is never client-settable at registration — there is no `role`
+  field on the registration request schema at all (see ADR 0006). The
+  only way to change a user's role or group after registration is the
+  Owner-only `PATCH /api/v1/admin/users/{id}` endpoint.
+- `GET /api/v1/admin/config` exposes only non-secret configuration
+  (`app_name`, `environment`, rate limit, token expiry) — `secret_key`
+  and any credential/connection-string value are never included, and
+  this is enforced by the response schema (`GlobalConfigOut`) only
+  declaring those specific fields, not by filtering a larger object.
+- Developer-role endpoints (`/api/v1/system/*`) expose operational
+  data (logs, model status, diagnostics, performance) only — they do
+  not expose other users' chats, profiles, or PII. `Role.DEVELOPER`
+  does not grant access to `/api/v1/users` or `/api/v1/users/{id}` for
+  another user; those still enforce self/Owner/Manager-of-same-group.
 - No model backend is integrated yet, so there is no model-facing
   attack surface yet.
 
 ## Planned (Later Phases)
 
-- Authentication (session/token-based identity verification).
-- Authorization (role/permission/group-based access control),
-  enforced via FastAPI dependencies on every protected route.
 - Rate limiting, enforced server-side (`RATE_LIMIT_REQUESTS_PER_MINUTE`
   is defined in configuration now but not yet enforced).
 - Request queuing/backpressure at the model layer so the model
   infrastructure's concurrency limits are never exceeded regardless of
   web-tier load.
+- Password reset / account recovery flow.
 - Dependency and container vulnerability scanning as part of CI, once
   a CI pipeline is introduced.
 
