@@ -22,7 +22,7 @@ model-independence design and `docs/adr/` for key decisions.
 │   │   ├── auth/         dependencies.py — authentication + RBAC enforcement
 │   │   ├── core/         Config, logging
 │   │   ├── db/           Engine/session, declarative base
-│   │   ├── model_layer/  ModelRegistry, ModelRouter, ModelProvider interface, mock provider (no real provider yet)
+│   │   ├── model_layer/  ModelRegistry, ModelRouter, ModelProvider interface, errors, mock + Qwen providers
 │   │   ├── workers/       Background workers (empty — later phase)
 │   │   └── main.py        FastAPI application entrypoint
 │   ├── alembic/           Database migrations
@@ -114,7 +114,26 @@ reachable, set `SKIP_PG_TESTS=1` to skip those tests rather than fail
 the run. Production and staging always use PostgreSQL — SQLite is a
 test/local-dev convenience only.
 
-## Frontend — Local Setup
+### Model Layer (Qwen)
+
+Both Qwen models are **disabled by default** — the app starts fine
+without any inference server running. To enable one or both, point
+them at an already-running OpenAI-compatible inference server (e.g.
+vLLM, TGI) via environment variables (see `backend/.env.example` for
+the full list per model: `QWEN_CODER_*` / `QWEN_NLP_*`):
+
+```bash
+QWEN_CODER_ENABLED=true
+QWEN_CODER_ENDPOINT_URL=http://localhost:8001/v1
+QWEN_NLP_ENABLED=true
+QWEN_NLP_ENDPOINT_URL=http://localhost:8002/v1
+```
+
+This application does not download or serve model weights itself —
+`QwenProvider` is an HTTP client only. See `ARCHITECTURE.md`'s "Model
+Abstraction Layer" section and ADR 0008 for the full design.
+
+
 
 ```bash
 cd frontend
@@ -155,19 +174,22 @@ file with real values.
 **Phase 2 — Database and Data Model: complete.**
 **Phase 3 — Authentication and RBAC: complete.**
 **Phase 4 — Model Abstraction and Registry: complete.**
+**Phase 5 — Qwen Model Integration: complete.**
 
 Implemented: project structure, environment-driven configuration,
 database engine/session setup, structured logging, health check
 endpoint, Nginx template, minimal frontend, documentation, the full
 relational data model with Alembic migrations, registration with
 manager-approval workflow, login/logout with revocable JWT sessions,
-role-based authorization, and — as of Phase 4 — the full model
-abstraction layer (`ModelRegistry`, `ModelRouter`, `ModelProvider`
-interface, and a working `MockProvider`) with `ChatService` proven to
-talk to a provider through the router alone. See `ARCHITECTURE.md`'s
-"Model Abstraction Layer" section and ADR 0007.
+role-based authorization, the full model abstraction layer
+(`ModelRegistry`, `ModelRouter`, `ModelProvider` interface), and — as
+of Phase 5 — two real model providers (Qwen 2.5 Coder 7B, Qwen 2.5
+NLP/Instruct 7B) integrated behind that abstraction via
+`QwenProvider`, with environment-driven per-model configuration and a
+provider-agnostic failure-handling hierarchy. See `ARCHITECTURE.md`'s
+"Model Abstraction Layer" section and ADR 0007/0008.
 
-Not yet implemented (by design — later phases): a real (Qwen) model
-provider, chat/message business-logic endpoints (the schema and
-model-layer plumbing exist; no create-chat/send-message HTTP API yet),
-background workers, rate limiting enforcement, password reset flow.
+Not yet implemented (by design — later phases): chat/message
+business-logic endpoints (the schema and model-layer plumbing exist;
+no create-chat/send-message HTTP API yet), background workers, rate
+limiting enforcement, password reset flow.

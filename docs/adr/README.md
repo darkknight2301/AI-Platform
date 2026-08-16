@@ -13,3 +13,4 @@ way it does, not just what it looks like.
 | [0005](./0005-data-model-design.md) | Data model design: UUID keys, portable enums, denormalized usage accounting |
 | [0006](./0006-registration-group-assignment-policy.md) | Registration group-assignment policy |
 | [0007](./0007-model-abstraction-layer.md) | Model abstraction layer: registry, router, provider interface |
+| [0008](./0008-qwen-model-integration.md) | Qwen model integration: isolation, configuration, failure handling |

@@ -1,9 +1,13 @@
 """
 Application entrypoint.
 
-Wires together configuration, logging, middleware, and API routers.
-Business functionality (chat, model orchestration, etc.) is deliberately
-NOT included yet — Phase 1 establishes foundation only.
+Wires together configuration, logging, middleware, API routers, and
+(as of Phase 5) the model layer's registry/router. This is the
+composition root: the only place besides `src/model_layer/bootstrap.py`
+itself that touches Qwen-provider wiring, and even here only via the
+generic `register_default_providers`/`close_providers` functions —
+never `QwenProvider` directly. No chat/business-logic endpoints are
+wired yet.
 """
 from __future__ import annotations
 
@@ -18,6 +22,9 @@ from src.api.v1.router import api_router
 from src.core.config import get_settings
 from src.core.logging import configure_logging
 from src.core.middleware import PerformanceMiddleware, RequestIDMiddleware
+from src.model_layer.bootstrap import close_providers, register_default_providers
+from src.model_layer.registry import ModelRegistry
+from src.model_layer.router import ModelRouter
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -26,12 +33,24 @@ settings = get_settings()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "application_startup",
         extra={"environment": settings.environment.value, "app_name": settings.app_name},
     )
+
+    model_registry = ModelRegistry()
+    register_default_providers(model_registry)
+    app.state.model_registry = model_registry
+    app.state.model_router = ModelRouter(model_registry)
+    logger.info(
+        "model_registry_initialized",
+        extra={"registered_models": [m.model_key for m in model_registry.list_models()]},
+    )
+
     yield
+
+    await close_providers(model_registry)
     logger.info("application_shutdown")
 
 

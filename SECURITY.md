@@ -65,7 +65,7 @@ combined with credentialed requests must not be used in production.
 
 ## Current Scope
 
-As of Phase 3:
+As of Phase 5:
 
 - Authentication and role-based authorization are implemented (see
   ARCHITECTURE.md's "Authentication and Authorization" section).
@@ -91,8 +91,22 @@ As of Phase 3:
   not expose other users' chats, profiles, or PII. `Role.DEVELOPER`
   does not grant access to `/api/v1/users` or `/api/v1/users/{id}` for
   another user; those still enforce self/Owner/Manager-of-same-group.
-- No model backend is integrated yet, so there is no model-facing
-  attack surface yet.
+- Two real model providers (Qwen 2.5 Coder 7B, Qwen 2.5 NLP/Instruct 
+  7B) are integrated behind the model abstraction (see ARCHITECTURE.md's
+  "Model Abstraction Layer" and ADR 0008), but there is still no
+  chat/message HTTP API exposing them to end users — no model-facing
+  attack surface is reachable from outside the process yet.
+  `QwenProvider`'s API key (`QWEN_*_API_KEY`), if configured, is only
+  ever sent as an outbound `Authorization` header to the configured
+  backend — never logged (see `QwenProvider._log_error`, which logs
+  only error kind/type/model_key, never headers, request bodies, or
+  response bodies).
+- Every Qwen-backend failure (unavailable, timeout, invalid request,
+  loading, runtime error, streaming interruption) is mapped to a
+  generic, safe-to-display error before it reaches `ChatService`'s
+  caller; internal diagnostic detail (exception type, status code) is
+  logged via the structured logger, never the raw response body (which
+  could echo request content back).
 
 ## Planned (Later Phases)
 

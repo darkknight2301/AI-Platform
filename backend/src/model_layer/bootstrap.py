@@ -1,0 +1,106 @@
+"""
+Wires the two initial Qwen models (Phase 5) into a `ModelRegistry`.
+
+This module — together with `providers/qwen/` — is the ONLY place
+outside `providers/qwen/` itself that imports `QwenProvider`. The
+composition root (`src/main.py`) calls `register_default_providers`
+and `close_providers` from here; it never imports `QwenProvider`
+directly. Nothing in `src/services/`, `src/api/`, `src/models/`, or
+the frontend imports anything from this module or from
+`providers/qwen/` — see ADR 0008.
+
+Each model is only registered if explicitly enabled via
+`QWEN_CODER_ENABLED` / `QWEN_NLP_ENABLED` (default: disabled), so a
+default `.env` doesn't require a running inference server just to
+start the application.
+"""
+from __future__ import annotations
+
+import logging
+import os
+
+from src.model_layer.providers.qwen.config import load_qwen_config
+from src.model_layer.providers.qwen.provider import QwenProvider
+from src.model_layer.registry import ModelRegistry
+from src.models.enums import ModelCategory
+
+logger = logging.getLogger(__name__)
+
+# Stable, well-known keys for the two Phase 5 initial models. Also used
+# as the `model_key` in the corresponding seed row in the `models`
+# table (see alembic/versions/..._seed_qwen_models.py) — the two must
+# be kept in sync; see ADR 0008.
+QWEN_CODER_MODEL_KEY = "qwen2.5-coder-7b"
+QWEN_NLP_MODEL_KEY = "qwen2.5-nlp-instruct-7b"
+
+
+def _is_enabled(env_var: str) -> bool:
+    return os.environ.get(env_var, "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def register_default_providers(registry: ModelRegistry) -> None:
+    """Register whichever of the two initial Qwen models are enabled.
+
+    Safe to call with neither enabled (the common case for local dev/
+    tests without a running inference server) — the registry simply
+    ends up with no Qwen entries, and anything routing through it will
+    get a normal `ModelNotFoundError`/`NoProviderForCategoryError`.
+    """
+    _maybe_register_coder(registry)
+    _maybe_register_nlp(registry)
+
+
+def _maybe_register_coder(registry: ModelRegistry) -> None:
+    if not _is_enabled("QWEN_CODER_ENABLED"):
+        logger.info("qwen_provider_not_registered", extra={"model_key": QWEN_CODER_MODEL_KEY})
+        return
+
+    config = load_qwen_config(
+        prefix="QWEN_CODER_",
+        model_key=QWEN_CODER_MODEL_KEY,
+        display_name="Qwen 2.5 Coder 7B",
+        default_endpoint_url="http://localhost:8001/v1",
+        default_context_length=32768,
+        default_max_output_tokens=4096,
+    )
+    provider = QwenProvider(model_key=QWEN_CODER_MODEL_KEY, category=ModelCategory.CODER, config=config)
+    registry.register(
+        model_key=QWEN_CODER_MODEL_KEY,
+        provider=provider,
+        category=ModelCategory.CODER,
+        enabled=True,
+        metadata={"display_name": config.display_name},
+    )
+    logger.info("qwen_provider_registered", extra={"model_key": QWEN_CODER_MODEL_KEY})
+
+
+def _maybe_register_nlp(registry: ModelRegistry) -> None:
+    if not _is_enabled("QWEN_NLP_ENABLED"):
+        logger.info("qwen_provider_not_registered", extra={"model_key": QWEN_NLP_MODEL_KEY})
+        return
+
+    config = load_qwen_config(
+        prefix="QWEN_NLP_",
+        model_key=QWEN_NLP_MODEL_KEY,
+        display_name="Qwen 2.5 NLP/Instruct 7B",
+        default_endpoint_url="http://localhost:8002/v1",
+        default_context_length=32768,
+        default_max_output_tokens=4096,
+    )
+    provider = QwenProvider(model_key=QWEN_NLP_MODEL_KEY, category=ModelCategory.NLP, config=config)
+    registry.register(
+        model_key=QWEN_NLP_MODEL_KEY,
+        provider=provider,
+        category=ModelCategory.NLP,
+        enabled=True,
+        metadata={"display_name": config.display_name},
+    )
+    logger.info("qwen_provider_registered", extra={"model_key": QWEN_NLP_MODEL_KEY})
+
+
+async def close_providers(registry: ModelRegistry) -> None:
+    """Gracefully close any provider-owned HTTP clients at shutdown."""
+    for registration in registry.list_models():
+        aclose = getattr(registration.provider, "aclose", None)
+        if aclose is not None:
+            await aclose()

@@ -16,6 +16,15 @@ See ADR 0007 for the design rationale and `providers/mock_provider.py`
 for a working reference implementation. No real (e.g. Qwen) provider
 is implemented yet — see `src/model_layer/README.md`.
 """
+from src.model_layer.errors import (
+    InvalidModelRequestError,
+    ModelLoadingError,
+    ModelProviderError,
+    ModelRuntimeError,
+    ModelStreamInterruptedError,
+    ModelTimeoutError,
+    ModelUnavailableProviderError,
+)
 from src.model_layer.provider_interface import ModelProvider
 from src.model_layer.registry import ModelNotFoundError, ModelRegistration, ModelRegistry
 from src.model_layer.router import (
@@ -46,4 +55,11 @@ __all__ = [
     "StreamingChunk",
     "ModelCapabilities",
     "TokenUsage",
+    "ModelProviderError",
+    "ModelUnavailableProviderError",
+    "ModelTimeoutError",
+    "InvalidModelRequestError",
+    "ModelLoadingError",
+    "ModelRuntimeError",
+    "ModelStreamInterruptedError",
 ]

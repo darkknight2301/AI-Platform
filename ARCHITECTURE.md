@@ -41,8 +41,8 @@ phases will build on.
 - **Workers** handle background/asynchronous processing so long-running
   work (e.g. model inference) doesn't block request/response cycles.
 - **Model Layer** abstracts away any specific model implementation
-  (see "Model Independence" below). As of Phase 4 the abstraction is
-  implemented; no real (Qwen) model provider is implemented yet.
+  (see "Model Independence" below). As of Phase 5 the abstraction is
+  implemented and integrated with two real Qwen models.
 
 ## Technology Choices
 
@@ -137,11 +137,11 @@ Qwen        Qwen
 
 This means adding a new model or swapping a provider requires writing
 a new provider implementation, not rewriting the chat system or any
-code that consumes the model layer. As of Phase 4, this abstraction is
-implemented in full (`src/model_layer/`) with a working mock provider
-proving the seam end-to-end — see the "Model Abstraction Layer"
-section below and ADR 0007 for the concrete design. No real (Qwen)
-provider is implemented yet.
+code that consumes the model layer. As of Phase 5, this abstraction is
+implemented in full (`src/model_layer/`), with a working mock provider
+proving the seam end-to-end and two real Qwen models integrated behind
+it — see the "Model Abstraction Layer" section below and ADR 0007/0008
+for the concrete design.
 
 ## Scalability Considerations (500+ users)
 
@@ -421,17 +421,22 @@ lines can be correlated.
 
 ## Model Abstraction Layer
 
-Established in Phase 4 (the abstraction itself — no real model backend
-is integrated yet; see ADR 0007 for full rationale).
+Established in Phase 4 (the abstraction) and integrated with real
+models in Phase 5 (Qwen 2.5 Coder 7B, Qwen 2.5 NLP/Instruct 7B) — see
+ADR 0007 and ADR 0008.
 
 ```text
-ChatService -> ModelRouter -> ModelRegistry -> ModelProvider -> concrete provider (e.g. MockProvider)
+ChatService -> ModelRouter -> ModelRegistry -> ModelProvider -> QwenProvider (or MockProvider)
 ```
 
 - **`ChatService`** (`src/services/chat_service.py`) — the chat
   system's only entry point into the model layer. Depends solely on
   `ModelRouter`; has no knowledge of `ModelRegistry` or any concrete
-  provider.
+  provider. Translates every provider/router failure into
+  `ChatServiceError` (a safe, generic message) while logging full
+  diagnostic detail internally — provider-agnostic, so this works
+  identically whether the underlying provider is `MockProvider` or
+  `QwenProvider`.
 - **`ModelRouter`** (`src/model_layer/router.py`) — resolves a
   `model_key` (or a `ModelCategory`, for "any enabled CODER model"
   -style requests) to a live `ModelProvider`, raising a typed error
@@ -442,8 +447,11 @@ ChatService -> ModelRouter -> ModelRegistry -> ModelProvider -> concrete provide
   (register/enable/disable/get/list/check_availability/get_capabilities).
   **Not** the same thing as the `models` database table (`AIModel`,
   Phase 2/3): the table is the durable, Owner-editable record of which
-  models are configured to exist; the registry is the runtime index
-  mapping each one's key to a live provider instance. See ADR 0007.
+  models are configured to exist (seeded with both Qwen models in
+  Phase 5 — see the seed migration); the registry is the runtime index
+  mapping each one's key to a live provider instance, built at process
+  startup by `src/main.py`'s lifespan calling
+  `model_layer.bootstrap.register_default_providers`. See ADR 0007/0008.
 - **`ModelProvider`** (`src/model_layer/provider_interface.py`) — the
   interface every concrete provider implements: `generate`, `stream`,
   `capabilities`, `health_check`. Nothing above this interface may
@@ -453,15 +461,34 @@ ChatService -> ModelRouter -> ModelRegistry -> ModelProvider -> concrete provide
   objects that cross any boundary in this stack; provider-specific
   tuning goes in `ModelRequest.options` (an open dict), not new schema
   fields.
+- **Error hierarchy** (`src/model_layer/errors.py`) —
+  `ModelUnavailableProviderError`, `ModelTimeoutError`,
+  `InvalidModelRequestError`, `ModelLoadingError`, `ModelRuntimeError`,
+  `ModelStreamInterruptedError`. Every provider maps its own failures
+  onto these before they cross the interface boundary; `ChatService`
+  catches only these (plus a defensive catch-all), never a
+  provider-specific exception.
 - **`MockProvider`** (`src/model_layer/providers/mock_provider.py`) —
   a complete, dependency-free `ModelProvider` implementation used to
-  prove the whole stack end-to-end and as the template for a future
-  real (Qwen) provider.
+  prove the whole stack end-to-end.
+- **`QwenProvider`** (`src/model_layer/providers/qwen/provider.py`,
+  Phase 5) — an HTTP client for an already-running, OpenAI-compatible
+  inference server (vLLM/TGI-style) hosting a Qwen model. Does not
+  load or download weights itself. Configuration
+  (`src/model_layer/providers/qwen/config.py`) is entirely
+  environment-variable driven, independently per model
+  (`QWEN_CODER_*` / `QWEN_NLP_*` — see `.env.example`): model path,
+  endpoint, context length, max output tokens, temperature, streaming,
+  device/dtype/GPU memory fraction. No machine-specific path is
+  hardcoded anywhere. Registration is opt-in
+  (`QWEN_CODER_ENABLED`/`QWEN_NLP_ENABLED`, default disabled), so the
+  app starts fine with no inference server running.
 
-Adding a real provider later is a new file in `providers/`
-implementing `ModelProvider`, plus one `registry.register(...)` call —
-no changes to `ModelRouter`, `ChatService`, or any schema in this
-package.
+Adding a new/future provider (a new Qwen version or a different
+backend entirely) is a new file in `providers/` implementing
+`ModelProvider`, plus one `registry.register(...)` call in
+`bootstrap.py` — no changes to `ModelRouter`, `ChatService`, any
+schema, or any file outside `src/model_layer/`.
 
 ## Security Boundaries
 
