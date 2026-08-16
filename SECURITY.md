@@ -65,7 +65,7 @@ combined with credentialed requests must not be used in production.
 
 ## Current Scope
 
-As of Phase 5:
+As of Phase 6:
 
 - Authentication and role-based authorization are implemented (see
   ARCHITECTURE.md's "Authentication and Authorization" section).
@@ -76,7 +76,9 @@ As of Phase 5:
 - Every authentication and authorization-relevant action (register,
   login success/failure/denial, logout, approve/reject, admin
   changes) writes an `AuditLog` entry — this table is no longer just
-  schema, it's actively written to.
+  schema, it's actively written to. Chat/message CRUD deliberately
+  does NOT write to this table (see ADR 0009, point 9) — it remains
+  reserved for account/security/administrative actions.
 - Role is never client-settable at registration — there is no `role`
   field on the registration request schema at all (see ADR 0006). The
   only way to change a user's role or group after registration is the
@@ -91,22 +93,29 @@ As of Phase 5:
   not expose other users' chats, profiles, or PII. `Role.DEVELOPER`
   does not grant access to `/api/v1/users` or `/api/v1/users/{id}` for
   another user; those still enforce self/Owner/Manager-of-same-group.
-- Two real model providers (Qwen 2.5 Coder 7B, Qwen 2.5 NLP/Instruct 
+- Two real model providers (Qwen 2.5 Coder 7B, Qwen 2.5 NLP/Instruct
   7B) are integrated behind the model abstraction (see ARCHITECTURE.md's
-  "Model Abstraction Layer" and ADR 0008), but there is still no
-  chat/message HTTP API exposing them to end users — no model-facing
-  attack surface is reachable from outside the process yet.
-  `QwenProvider`'s API key (`QWEN_*_API_KEY`), if configured, is only
-  ever sent as an outbound `Authorization` header to the configured
-  backend — never logged (see `QwenProvider._log_error`, which logs
-  only error kind/type/model_key, never headers, request bodies, or
-  response bodies).
+  "Model Abstraction Layer" and ADR 0008). `QwenProvider`'s API key
+  (`QWEN_*_API_KEY`), if configured, is only ever sent as an outbound
+  `Authorization` header to the configured backend — never logged (see
+  `QwenProvider._log_error`, which logs only error kind/type/model_key,
+  never headers, request bodies, or response bodies).
 - Every Qwen-backend failure (unavailable, timeout, invalid request,
   loading, runtime error, streaming interruption) is mapped to a
   generic, safe-to-display error before it reaches `ChatService`'s
   caller; internal diagnostic detail (exception type, status code) is
   logged via the structured logger, never the raw response body (which
   could echo request content back).
+- The chat/message HTTP API (Phase 6) is now the model-facing attack
+  surface: every chat/message operation requires authentication and
+  enforces strict per-user ownership (`ConversationService`,
+  `chat.user_id == requester.id`, no Owner/Manager bypass — see
+  ARCHITECTURE.md's "Chat Backend" section and ADR 0009, point 4). A
+  failed model call never destroys existing conversation state (ADR
+  0009, point 5), and streaming responses always terminate with a
+  well-formed event even on failure, never a raw exception (ADR 0009,
+  point 7) — the same safe-error-handling guarantee established in
+  Phase 5 now reaches all the way to the HTTP client.
 
 ## Planned (Later Phases)
 

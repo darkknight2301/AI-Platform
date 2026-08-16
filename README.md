@@ -14,8 +14,10 @@ model-independence design and `docs/adr/` for key decisions.
 │   ├── src/
 │   │   ├── api/         Route definitions (versioned under v1/)
 │   │   ├── api/
-│   │   │   └── v1/routers/  auth.py, users.py, system.py, admin.py, health.py
-│   │   ├── services/     business logic (auth_service, user_service)
+│   │   │   ├── v1/routers/  auth.py, users.py, chats.py, messages.py, system.py, admin.py, health.py
+│   │   │   ├── deps.py      shared dependencies (model router/registry, chat/conversation services)
+│   │   │   └── error_mapping.py
+│   │   ├── services/     business logic (auth_service, user_service, chat_service, conversation_service)
 │   │   ├── repositories/ data access (user, group, auth_session, audit_log, model, usage)
 │   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs, auth_sessions)
 │   │   ├── schemas/      Pydantic request/response schemas
@@ -133,6 +135,26 @@ This application does not download or serve model weights itself —
 `QwenProvider` is an HTTP client only. See `ARCHITECTURE.md`'s "Model
 Abstraction Layer" section and ADR 0008 for the full design.
 
+### Chat API
+
+Once authenticated (`POST /api/v1/auth/login`) and a model is
+registered (`GET /api/v1/admin/models` as an Owner, or use one of the
+Phase 5 seed rows), create a chat and send a prompt:
+
+```bash
+curl -X POST localhost:8000/api/v1/chats \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"model_key": "qwen2.5-coder-7b", "title": "My chat"}'
+
+curl -X POST localhost:8000/api/v1/chats/$CHAT_ID/messages \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"content": "Write a hello world function", "stream": false}'
+```
+
+Add `"stream": true` for a Server-Sent-Events response. See
+`ARCHITECTURE.md`'s "Chat Backend" section and ADR 0009 for the full
+endpoint list, revision model, and streaming format.
+
 
 
 ```bash
@@ -175,21 +197,22 @@ file with real values.
 **Phase 3 — Authentication and RBAC: complete.**
 **Phase 4 — Model Abstraction and Registry: complete.**
 **Phase 5 — Qwen Model Integration: complete.**
+**Phase 6 — Chat Backend: complete.**
 
 Implemented: project structure, environment-driven configuration,
 database engine/session setup, structured logging, health check
 endpoint, Nginx template, minimal frontend, documentation, the full
 relational data model with Alembic migrations, registration with
 manager-approval workflow, login/logout with revocable JWT sessions,
-role-based authorization, the full model abstraction layer
-(`ModelRegistry`, `ModelRouter`, `ModelProvider` interface), and — as
-of Phase 5 — two real model providers (Qwen 2.5 Coder 7B, Qwen 2.5
-NLP/Instruct 7B) integrated behind that abstraction via
-`QwenProvider`, with environment-driven per-model configuration and a
-provider-agnostic failure-handling hierarchy. See `ARCHITECTURE.md`'s
-"Model Abstraction Layer" section and ADR 0007/0008.
+role-based authorization, the full model abstraction layer, two real
+Qwen model providers, and — as of Phase 6 — the complete chat backend:
+chat CRUD, sending prompts (streaming and non-streaming), prompt
+editing with full revision history (never overwritten), regenerating
+replies, server-persisted undo/redo, and per-operation ownership
+authorization. See `ARCHITECTURE.md`'s "Chat Backend" section and
+ADR 0009.
 
-Not yet implemented (by design — later phases): chat/message
-business-logic endpoints (the schema and model-layer plumbing exist;
-no create-chat/send-message HTTP API yet), background workers, rate
-limiting enforcement, password reset flow.
+Not yet implemented (by design — later phases): background workers,
+rate limiting enforcement, password reset flow, a chat UI in the
+frontend (the backend API is complete; `frontend/` remains a
+foundation health-check page).

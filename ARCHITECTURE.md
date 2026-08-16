@@ -490,6 +490,65 @@ backend entirely) is a new file in `providers/` implementing
 `bootstrap.py` — no changes to `ModelRouter`, `ChatService`, any
 schema, or any file outside `src/model_layer/`.
 
+## Chat Backend
+
+Established in Phase 6 — see ADR 0009 for full design rationale.
+
+```text
+API routers (chats.py, messages.py)
+  -> ConversationService (persistence + orchestration)
+      -> repositories (chat/message/model)          [DB]
+      -> ChatService (Phase 5, model-orchestration)  -> ModelRouter -> ... -> QwenProvider/MockProvider
+```
+
+### Endpoints
+
+```text
+POST   /api/v1/chats                    create (model_key required, title optional)
+GET    /api/v1/chats                    list own chats (status filter, pagination)
+GET    /api/v1/chats/{id}               get one
+PATCH  /api/v1/chats/{id}               update title/status/model
+DELETE /api/v1/chats/{id}               soft delete (status=DELETED)
+GET    /api/v1/chats/{id}/history       active conversation thread
+
+POST   /api/v1/chats/{id}/messages      send a prompt (stream: bool)
+POST   /api/v1/messages/{id}/edit       edit a prompt -> new revision (+ cascades one reply)
+POST   /api/v1/messages/{id}/regenerate regenerate a reply -> new revision
+GET    /api/v1/messages/{id}/revisions  all revisions of a message's slot
+POST   /api/v1/messages/{id}/activate   make a revision active (server-persisted undo/redo)
+```
+
+### Revision model
+
+A "slot" is a logical position in a conversation (one prompt, or the
+one reply that follows it). Editing/regenerating never overwrites or
+deletes — it inserts a new row in the same slot
+(`root_message_id` + `sequence_number` + `revision`, see the
+docstring in `src/models/message.py`) and flips `is_active`. History
+is never destroyed; `GET /messages/{id}/revisions` can always retrieve
+every prior version, and `POST /messages/{id}/activate` can always
+restore one.
+
+### Ownership
+
+Every operation resolves through `ConversationService`'s
+`_get_owned_chat`/`_get_owned_message`, which require exact
+`chat.user_id == requester.id` — no Owner/Manager bypass (chats are
+private content; see ADR 0009 point 4).
+
+### Streaming
+
+`POST .../messages` (and edit/regenerate) with `"stream": true` return
+Server-Sent Events. Every `data:` line is a `StreamEventOut` — the
+same shape regardless of which model provider produced it (Mock or
+Qwen); the terminal event always carries `is_final`, `finish_reason`,
+the persisted `message_id`, and token counts, even on failure
+(`finish_reason="error"`). Persistence of the completed message
+happens in a dedicated `AsyncSessionLocal`-backed session
+(`src.services.conversation_service.stream_generation`), not the
+request-scoped one, since a streaming response's body is consumed
+after the route handler returns.
+
 ## Security Boundaries
 
 See `SECURITY.md` for the full security model. In summary: all
