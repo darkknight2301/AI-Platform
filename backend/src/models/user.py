@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin
@@ -22,6 +22,16 @@ if TYPE_CHECKING:
 
 class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "max_active_chats_override IS NULL OR max_active_chats_override >= 0",
+            name="ck_users_max_active_chats_override_nonneg",
+        ),
+        CheckConstraint(
+            "token_quota_override IS NULL OR token_quota_override >= 0",
+            name="ck_users_token_quota_override_nonneg",
+        ),
+    )
 
     username: Mapped[str] = mapped_column(String(150), nullable=False, unique=True, index=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
@@ -39,6 +49,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # Quota overrides (Phase 7). NULL means "fall through to the
+    # group override, else the global default." See ADR 0010.
+    max_active_chats_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_quota_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     group: Mapped[Group | None] = relationship(back_populates="users")
     chats: Mapped[list[Chat]] = relationship(back_populates="user", cascade="all, delete-orphan")

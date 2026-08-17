@@ -15,3 +15,4 @@ way it does, not just what it looks like.
 | [0007](./0007-model-abstraction-layer.md) | Model abstraction layer: registry, router, provider interface |
 | [0008](./0008-qwen-model-integration.md) | Qwen model integration: isolation, configuration, failure handling |
 | [0009](./0009-chat-backend-design.md) | Chat backend: revision model, ownership, streaming persistence |
+| [0010](./0010-quotas-and-limits.md) | Token quotas and chat limits: resolution, renewal, concurrency |

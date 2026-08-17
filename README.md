@@ -17,7 +17,7 @@ model-independence design and `docs/adr/` for key decisions.
 │   │   │   ├── v1/routers/  auth.py, users.py, chats.py, messages.py, system.py, admin.py, health.py
 │   │   │   ├── deps.py      shared dependencies (model router/registry, chat/conversation services)
 │   │   │   └── error_mapping.py
-│   │   ├── services/     business logic (auth_service, user_service, chat_service, conversation_service)
+│   │   ├── services/     business logic (auth_service, user_service, chat_service, conversation_service, quota_service)
 │   │   ├── repositories/ data access (user, group, auth_session, audit_log, model, usage)
 │   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs, auth_sessions)
 │   │   ├── schemas/      Pydantic request/response schemas
@@ -198,6 +198,7 @@ file with real values.
 **Phase 4 — Model Abstraction and Registry: complete.**
 **Phase 5 — Qwen Model Integration: complete.**
 **Phase 6 — Chat Backend: complete.**
+**Phase 7 — Token Quotas and Chat Limits: complete.**
 
 Implemented: project structure, environment-driven configuration,
 database engine/session setup, structured logging, health check
@@ -205,14 +206,15 @@ endpoint, Nginx template, minimal frontend, documentation, the full
 relational data model with Alembic migrations, registration with
 manager-approval workflow, login/logout with revocable JWT sessions,
 role-based authorization, the full model abstraction layer, two real
-Qwen model providers, and — as of Phase 6 — the complete chat backend:
-chat CRUD, sending prompts (streaming and non-streaming), prompt
-editing with full revision history (never overwritten), regenerating
-replies, server-persisted undo/redo, and per-operation ownership
-authorization. See `ARCHITECTURE.md`'s "Chat Backend" section and
-ADR 0009.
+Qwen model providers, the complete chat backend (CRUD, streaming,
+revisions, undo/redo, ownership), and — as of Phase 7 — configurable
+chat limits and token quotas (global default / group override / user
+override), a documented renewal policy, concurrency-safe enforcement
+via PostgreSQL advisory locks, and a documented no-charge-on-failure
+policy. See `ARCHITECTURE.md`'s "Quotas and Limits" section and
+ADR 0010.
 
 Not yet implemented (by design — later phases): background workers,
-rate limiting enforcement, password reset flow, a chat UI in the
-frontend (the backend API is complete; `frontend/` remains a
+general API rate limiting enforcement, password reset flow, a chat UI
+in the frontend (the backend API is complete; `frontend/` remains a
 foundation health-check page).

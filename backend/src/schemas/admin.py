@@ -19,28 +19,47 @@ from src.models.enums import (
 class GroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     status: GroupStatus = GroupStatus.ACTIVE
+    max_active_chats_override: int | None = Field(default=None, ge=0)
+    token_quota_override: int | None = Field(default=None, ge=0)
+
+
+class GroupUpdate(BaseModel):
+    """All fields optional; only provided fields are changed. A provided
+    `null` for an override field clears it (falls through to the global
+    default) — see ADR 0010."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    status: GroupStatus | None = None
+    max_active_chats_override: int | None = Field(default=None, ge=0)
+    token_quota_override: int | None = Field(default=None, ge=0)
 
 
 class GroupOut(BaseModel):
     id: uuid.UUID
     name: str
     status: GroupStatus
+    max_active_chats_override: int | None
+    token_quota_override: int | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class UserAdminUpdate(BaseModel):
-    """Owner-only update to a user's role/status/group.
+    """Owner-only update to a user's role/status/group/quota overrides.
 
     All fields optional; only provided fields are changed. This is the
     one place role or group can be changed after registration — never
-    directly by the affected user.
+    directly by the affected user. A provided `null` for an override
+    field clears it (falls through to the group override or global
+    default) — see ADR 0010.
     """
 
     role: Role | None = None
     status: UserStatus | None = None
     group_id: uuid.UUID | None = None
+    max_active_chats_override: int | None = Field(default=None, ge=0)
+    token_quota_override: int | None = Field(default=None, ge=0)
 
 
 class ModelCreate(BaseModel):
@@ -105,3 +124,6 @@ class GlobalConfigOut(BaseModel):
     environment: str
     rate_limit_requests_per_minute: int
     access_token_expire_minutes: int
+    default_max_active_chats: int
+    default_token_quota: int
+    token_quota_renewal_policy: str

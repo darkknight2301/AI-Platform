@@ -9,10 +9,12 @@ from fastapi import HTTPException, status
 
 from src.services.conversation_errors import (
     ChatAccessDeniedError,
+    ChatLimitExceededError,
     ChatNotFoundError,
     InvalidMessageOperationError,
     MessageNotFoundError,
     ModelNotConfiguredError,
+    TokenQuotaExceededError,
 )
 from src.services.errors import ChatServiceError
 
@@ -22,6 +24,8 @@ CONVERSATION_EXCEPTIONS = (
     MessageNotFoundError,
     InvalidMessageOperationError,
     ModelNotConfiguredError,
+    ChatLimitExceededError,
+    TokenQuotaExceededError,
     ChatServiceError,
 )
 
@@ -41,6 +45,10 @@ def to_http_exception(exc: Exception) -> HTTPException:
         return HTTPException(
             status.HTTP_400_BAD_REQUEST, "The requested model is not configured or not enabled."
         )
+    if isinstance(exc, ChatLimitExceededError):
+        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
+    if isinstance(exc, TokenQuotaExceededError):
+        return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, str(exc))
     if isinstance(exc, ChatServiceError):
         # Already a safe, generic message (see src/services/errors.py) —
         # 502 because the failure is in the upstream model backend, not

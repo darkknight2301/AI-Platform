@@ -549,6 +549,58 @@ happens in a dedicated `AsyncSessionLocal`-backed session
 request-scoped one, since a streaming response's body is consumed
 after the route handler returns.
 
+## Quotas and Limits
+
+Established in Phase 7 — see ADR 0010 for full design rationale.
+
+Two independently-configurable limits, both resolved as **user
+override > group override > global default**:
+
+```text
+Chat limit:   max active (status=ACTIVE) chats per user
+Token quota:  max input+output tokens per user within the renewal window
+```
+
+Overrides live on `Group`/`User` (nullable `Integer` columns), managed
+via `PATCH /api/v1/admin/groups/{id}` / `PATCH /api/v1/admin/users/{id}`
+(Owner only). Global defaults and the renewal policy are
+environment-configurable (`Settings.default_max_active_chats`,
+`default_token_quota`, `token_quota_renewal_policy`).
+
+### Renewal policy
+
+Configurable: `ROLLING_24H` (default — trailing 24h from "now",
+continuously sliding) or `DAILY_RESET_UTC` (fixed UTC-midnight reset).
+Both are always computed as `SUM(usage_records.total_tokens)` over the
+window — never a separately-mutable counter.
+
+### Concurrency safety
+
+- **Chat limit**: `pg_advisory_xact_lock` held across the whole
+  count-then-insert (cheap — no external call involved).
+- **Token quota**: the lock is held only for a brief check-and-insert
+  of a `QuotaReservation` row (a conservative token estimate,
+  `Settings.quota_reservation_estimated_output_tokens`), released
+  immediately — never held across the (potentially many-second) model
+  call. Concurrent requests see each other's open reservations in
+  their own quota check, closing the race a bare usage-sum check would
+  leave open.
+
+### Charging policy
+
+A failed model request (`ChatServiceError`, from Phase 5/6) is never
+charged: the reservation is released, no `Usage` row is created —
+consistent with Phase 6's existing "a failed generation persists no
+message" policy (ADR 0009).
+
+### API
+
+`GET /api/v1/users/me/quota` (self) and `GET /api/v1/users/{id}/quota`
+(self, Owner, or Manager-of-same-group) return `used_tokens`,
+`quota_tokens`, `percent_used`, `renewal_policy`, `renews_at`,
+`active_chats`, `max_active_chats` — everything a frontend needs to
+show "62%", "62,000 / 100,000", and a renewal time.
+
 ## Security Boundaries
 
 See `SECURITY.md` for the full security model. In summary: all

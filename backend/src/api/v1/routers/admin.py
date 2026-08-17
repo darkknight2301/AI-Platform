@@ -33,6 +33,7 @@ from src.schemas.admin import (
     GlobalConfigOut,
     GroupCreate,
     GroupOut,
+    GroupUpdate,
     ModelCreate,
     ModelOut,
     ModelUpdate,
@@ -62,7 +63,12 @@ async def create_group(
     current_user: User = Depends(require_min_role(Role.OWNER)),
     session: AsyncSession = Depends(get_db),
 ) -> Group:
-    group = Group(name=payload.name, status=payload.status)
+    group = Group(
+        name=payload.name,
+        status=payload.status,
+        max_active_chats_override=payload.max_active_chats_override,
+        token_quota_override=payload.token_quota_override,
+    )
     session.add(group)
     await session.flush()
     await audit_log_repository.create(
@@ -74,6 +80,43 @@ async def create_group(
         target_id=str(group.id),
         request_id=getattr(request.state, "request_id", None),
         metadata={"name": group.name},
+    )
+    await session.commit()
+    await session.refresh(group)
+    return group
+
+
+@router.patch("/groups/{group_id}", response_model=GroupOut)
+async def update_group(
+    group_id: uuid.UUID,
+    payload: GroupUpdate,
+    request: Request,
+    current_user: User = Depends(require_min_role(Role.OWNER)),
+    session: AsyncSession = Depends(get_db),
+) -> Group:
+    """Includes the group-level chat-limit/token-quota overrides (Phase 7,
+    ADR 0010). A field present in the request body with value `null`
+    clears that override (falls through to the global default); an
+    omitted field is left unchanged — `exclude_unset` distinguishes the
+    two, same convention as `PATCH /admin/models/{id}`."""
+    group = await group_repository.get_by_id(session, group_id)
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    changes = {field: str(value) for field, value in updates.items()}
+    for field, value in updates.items():
+        setattr(group, field, value)
+
+    await audit_log_repository.create(
+        session,
+        actor_user_id=current_user.id,
+        action="UPDATE_GROUP",
+        result=AuditResult.SUCCESS,
+        target_type="group",
+        target_id=str(group.id),
+        request_id=getattr(request.state, "request_id", None),
+        metadata=changes,
     )
     await session.commit()
     await session.refresh(group)
@@ -113,6 +156,15 @@ async def update_user(
     if payload.group_id is not None and payload.group_id != target.group_id:
         changes["group_id"] = f"{target.group_id} -> {payload.group_id}"
         target.group_id = payload.group_id
+
+    # Quota overrides (Phase 7): use exclude_unset so an explicit
+    # `null` clears the override while an omitted field is untouched —
+    # see the schema docstring and ADR 0010.
+    provided = payload.model_dump(exclude_unset=True)
+    for field in ("max_active_chats_override", "token_quota_override"):
+        if field in provided:
+            changes[field] = f"{getattr(target, field)} -> {provided[field]}"
+            setattr(target, field, provided[field])
 
     await audit_log_repository.create(
         session,
@@ -234,4 +286,7 @@ async def get_global_config() -> GlobalConfigOut:
         environment=settings.environment.value,
         rate_limit_requests_per_minute=settings.rate_limit_requests_per_minute,
         access_token_expire_minutes=settings.access_token_expire_minutes,
+        default_max_active_chats=settings.default_max_active_chats,
+        default_token_quota=settings.default_token_quota,
+        token_quota_renewal_policy=settings.token_quota_renewal_policy.value,
     )

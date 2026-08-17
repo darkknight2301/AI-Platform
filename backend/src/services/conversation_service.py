@@ -38,8 +38,9 @@ from src.models.enums import ChatStatus, MessageRole
 from src.models.message import Message
 from src.models.usage import Usage
 from src.models.user import User
-from src.repositories import chat_repository, message_repository, model_repository
+from src.repositories import chat_repository, message_repository, model_repository, quota_repository
 from src.schemas.message import MessageOut, StreamEventOut
+from src.services import quota_service
 from src.services.chat_service import ChatService
 from src.services.conversation_errors import (
     ChatAccessDeniedError,
@@ -85,6 +86,8 @@ class ConversationService:
 
     async def create_chat(self, *, user: User, model_key: str, title: str | None) -> Chat:
         model = await self._get_model_by_key(model_key)
+        # Concurrency-safe check: see quota_service.enforce_chat_limit.
+        await quota_service.enforce_chat_limit(self._session, user)
         chat = Chat(
             user_id=user.id,
             model_id=model.id,
@@ -184,6 +187,21 @@ class ConversationService:
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return response, elapsed_ms
 
+    async def _reserve_call_release(
+        self, user: User, model_request: ModelRequest
+    ) -> tuple[ModelResponse, int]:
+        """`_call_model`, wrapped with a token-quota reservation that is
+        always released afterward, success or failure (see
+        `quota_service.reserve_tokens`/`release_reservation`)."""
+        reservation = await quota_service.reserve_tokens(self._session, user)
+        try:
+            response, elapsed_ms = await self._call_model(model_request)
+        except ChatServiceError:
+            await quota_service.release_reservation(self._session, reservation.id)
+            raise
+        await quota_service.release_reservation(self._session, reservation.id)
+        return response, elapsed_ms
+
     async def _persist_assistant_message(
         self,
         *,
@@ -248,8 +266,11 @@ class ConversationService:
             model_key=model.model_key, messages=self._to_model_messages(context)
         )
 
+        # Quota check happens after the prompt is flushed (so it's part
+        # of the same slot/sequence-number allocation) but before the
+        # model is called — see quota_service.reserve_tokens.
         try:
-            response, elapsed_ms = await self._call_model(model_request)
+            response, elapsed_ms = await self._reserve_call_release(user, model_request)
         except ChatServiceError:
             # Keep the user's prompt even though generation failed.
             await self._session.commit()
@@ -338,14 +359,17 @@ class ConversationService:
                 await message_repository.get_max_revision_in_slot(self._session, following_root) + 1
             )
 
+            reservation = await quota_service.reserve_tokens(self._session, user)
             try:
                 response, elapsed_ms = await self._call_model(model_request)
             except ChatServiceError:
+                await quota_service.release_reservation(self._session, reservation.id)
                 # Keep the edited prompt; the old reply stays active
                 # untouched since we haven't deactivated it yet.
                 chat.revision += 1
                 await self._session.commit()
                 raise
+            await quota_service.release_reservation(self._session, reservation.id)
 
             await message_repository.deactivate_slot(self._session, following_root)
             assistant_message = await self._persist_assistant_message(
@@ -390,7 +414,7 @@ class ConversationService:
             model_key=model.model_key, messages=self._to_model_messages(context)
         )
 
-        response, elapsed_ms = await self._call_model(model_request)
+        response, elapsed_ms = await self._reserve_call_release(user, model_request)
         # Only reached on success — old revision stays active if the
         # call above raised.
         await message_repository.deactivate_slot(self._session, root_id)
@@ -447,6 +471,10 @@ class ConversationService:
         model_request = ModelRequest(
             model_key=model.model_key, messages=self._to_model_messages(context)
         )
+        # Reserve quota for the upcoming streamed generation — see
+        # quota_service.reserve_tokens. Committed together with the
+        # prompt below (reserve_tokens commits internally).
+        reservation = await quota_service.reserve_tokens(self._session, user)
         # Commit now: the prompt must be durable regardless of what
         # happens to the request-scoped session once streaming begins.
         await self._session.commit()
@@ -461,6 +489,7 @@ class ConversationService:
             revision=1,
             request_id=request_id,
             model_request=model_request,
+            reservation_id=reservation.id,
         )
 
     async def prepare_regenerate_stream(
@@ -484,6 +513,7 @@ class ConversationService:
         model_request = ModelRequest(
             model_key=model.model_key, messages=self._to_model_messages(context)
         )
+        reservation = await quota_service.reserve_tokens(self._session, user)
 
         return PendingGeneration(
             chat_id=chat.id,
@@ -495,6 +525,7 @@ class ConversationService:
             revision=next_revision,
             request_id=request_id,
             model_request=model_request,
+            reservation_id=reservation.id,
         )
 
     async def prepare_edit_stream(
@@ -548,6 +579,7 @@ class ConversationService:
         following_next_revision = (
             await message_repository.get_max_revision_in_slot(self._session, following_root) + 1
         )
+        reservation = await quota_service.reserve_tokens(self._session, user)
 
         chat.revision += 1
         # Commit the edited prompt now — durable regardless of what
@@ -564,6 +596,7 @@ class ConversationService:
             revision=following_next_revision,
             request_id=request_id,
             model_request=model_request,
+            reservation_id=reservation.id,
         )
 
 
@@ -582,6 +615,7 @@ class PendingGeneration:
     revision: int
     request_id: str | None
     model_request: ModelRequest
+    reservation_id: uuid.UUID
 
 
 async def stream_generation(
@@ -616,7 +650,10 @@ async def stream_generation(
             if chunk.finish_reason == "error":
                 # Nothing more will be yielded. Nothing is persisted: the
                 # prompt (already committed by the caller) is preserved;
-                # the failed reply is not recorded as a message.
+                # the failed reply is not recorded as a message. Release
+                # the reservation — a failed generation isn't charged.
+                async with session_factory() as session:
+                    await quota_service.release_reservation(session, pending.reservation_id)
                 yield StreamEventOut(delta="", is_final=True, finish_reason="error")
                 return
 
@@ -628,13 +665,18 @@ async def stream_generation(
         else:
             # Generator exhausted without a final chunk — treat like a
             # clean-but-unexpected end rather than crash the response.
+            async with session_factory() as session:
+                await quota_service.release_reservation(session, pending.reservation_id)
             yield StreamEventOut(delta="", is_final=True, finish_reason="stop")
             return
     except ChatServiceError:
         # Once headers are sent for an SSE response, the HTTP status
         # can no longer change — a terminal error event is the only
         # way left to signal failure to the client. Nothing is
-        # persisted for a beginning-of-stream failure either.
+        # persisted for a beginning-of-stream failure either, and the
+        # reservation is released — this request is not charged.
+        async with session_factory() as session:
+            await quota_service.release_reservation(session, pending.reservation_id)
         yield StreamEventOut(delta="", is_final=True, finish_reason="error")
         return
 
@@ -672,6 +714,11 @@ async def stream_generation(
                 timestamp=datetime.now(UTC),
             )
         )
+
+        # Release the reservation in the same commit as the real charge
+        # (the Usage row above) — the reservation's provisional estimate
+        # is superseded by the actual, provider-reported accounting.
+        await quota_repository.delete_reservation(session, pending.reservation_id)
 
         chat = await session.get(Chat, pending.chat_id)
         if chat is not None:

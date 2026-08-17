@@ -21,6 +21,26 @@ class Environment(str, Enum):
     TEST = "test"
 
 
+class TokenQuotaRenewalPolicy(str, Enum):
+    """How a user's token quota window is computed.
+
+    ROLLING_24H: usage counted is always the trailing 24 hours from
+    "now" — the window continuously slides, so tokens used 25 hours
+    ago no longer count, with no fixed daily reset instant.
+
+    DAILY_RESET_UTC: usage counted is since the most recent UTC
+    midnight — a fixed, predictable reset instant, at the cost of a
+    burst-at-midnight edge case a rolling window doesn't have.
+
+    Both are computed from the persisted `usage_records` ledger (SUM
+    over the window), never a separately-mutable counter — see
+    ADR 0010.
+    """
+
+    ROLLING_24H = "ROLLING_24H"
+    DAILY_RESET_UTC = "DAILY_RESET_UTC"
+
+
 class Settings(BaseSettings):
     """Central application configuration.
 
@@ -67,6 +87,21 @@ class Settings(BaseSettings):
 
     # --- Rate limiting / concurrency (foundation only, enforced later) ----
     rate_limit_requests_per_minute: int = 60
+
+    # --- Quotas (Phase 7) --------------------------------------------------
+    # System-wide defaults. Group/user overrides live in the database
+    # (Group.max_active_chats_override / User.max_active_chats_override
+    # etc — see src/models/group.py, src/models/user.py) since those are
+    # runtime, admin-editable values; the renewal *policy* itself is a
+    # single system-wide setting, not per-group/user overridable.
+    default_max_active_chats: int = 20
+    default_token_quota: int = 100_000
+    token_quota_renewal_policy: TokenQuotaRenewalPolicy = TokenQuotaRenewalPolicy.ROLLING_24H
+    # Conservative per-request token estimate used only to reserve quota
+    # for the duration of an in-flight model call (see
+    # src/services/quota_service.py) — never used for actual accounting,
+    # which is always the provider-reported usage.
+    quota_reservation_estimated_output_tokens: int = 2048
 
     @field_validator("cors_allow_origins", mode="before")
     @classmethod

@@ -65,7 +65,14 @@ combined with credentialed requests must not be used in production.
 
 ## Current Scope
 
-As of Phase 6:
+As of Phase 7:
+
+- Chat and token usage are now bounded: every chat creation and model
+  call is gated by `src/services/quota_service.py`'s concurrency-safe
+  limit checks (`pg_advisory_xact_lock` — see ADR 0010), preventing a
+  single user (or a burst of concurrent requests from one user) from
+  unbounded resource consumption. A failed model call is never
+  charged against quota.
 
 - Authentication and role-based authorization are implemented (see
   ARCHITECTURE.md's "Authentication and Authorization" section).

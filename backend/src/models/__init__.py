@@ -20,6 +20,7 @@ from src.models.enums import (
 )
 from src.models.group import Group
 from src.models.message import Message
+from src.models.quota_reservation import QuotaReservation
 from src.models.usage import Usage
 from src.models.user import User
 
@@ -35,6 +36,7 @@ __all__ = [
     "Message",
     "MessageRole",
     "ModelCategory",
+    "QuotaReservation",
     "Role",
     "Usage",
     "User",
