@@ -601,6 +601,38 @@ message" policy (ADR 0009).
 `active_chats`, `max_active_chats` — everything a frontend needs to
 show "62%", "62,000 / 100,000", and a renewal time.
 
+## Chat Frontend
+
+Established in Phase 8 — React + TypeScript + Vite, replacing the
+Phase 1 foundation page. See ADR 0011 for full rationale.
+
+```text
+App (routing: /login, /register, /)
+  AuthProvider (session state, token in localStorage)
+    ChatPage (owns chats/models/quota state)
+      Sidebar (new chat, search, rename/archive/delete, usage panel)
+      ChatView (message list, composer, streaming)
+        Markdown (fenced code blocks + copy)
+        RevisionNav (undo/redo via POST /messages/{id}/activate)
+```
+
+- **`src/api/client.ts`** — fetch wrapper, JWT storage, `ApiError`
+  normalization from the backend's `{"detail": "..."}` shape.
+- **`src/api/stream.ts`** — the ONLY file that parses the SSE wire
+  format (`StreamEventOut`); no model-specific logic anywhere in the
+  frontend (see ADR 0011, point 3).
+- **State**: after any mutating action, the frontend refetches
+  chats/history/quota from the backend rather than hand-patching local
+  state — correctness over minimizing requests, given the revision
+  model's complexity (ADR 0009).
+- **`GET /api/v1/models`** (Phase 8 addition, `src/api/v1/routers/models.py`)
+  — the model selector's data source; any authenticated user, enabled
+  models only.
+
+Explicitly NOT implemented, per Phase 8 scope: attachments, file
+upload, image upload, or a paperclip button — no such code path
+exists anywhere in the frontend.
+
 ## Security Boundaries
 
 See `SECURITY.md` for the full security model. In summary: all

@@ -12,14 +12,13 @@ model-independence design and `docs/adr/` for key decisions.
 .
 ├── backend/            Python/FastAPI application
 │   ├── src/
-│   │   ├── api/         Route definitions (versioned under v1/)
 │   │   ├── api/
-│   │   │   ├── v1/routers/  auth.py, users.py, chats.py, messages.py, system.py, admin.py, health.py
+│   │   │   ├── v1/routers/  auth.py, users.py, chats.py, messages.py, models.py, system.py, admin.py, health.py
 │   │   │   ├── deps.py      shared dependencies (model router/registry, chat/conversation services)
 │   │   │   └── error_mapping.py
 │   │   ├── services/     business logic (auth_service, user_service, chat_service, conversation_service, quota_service)
-│   │   ├── repositories/ data access (user, group, auth_session, audit_log, model, usage)
-│   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs, auth_sessions)
+│   │   ├── repositories/ data access (user, group, auth_session, audit_log, model, usage, quota)
+│   │   ├── models/       SQLAlchemy ORM models (users, groups, chats, messages, models, usage, audit logs, auth_sessions, quota_reservations)
 │   │   ├── schemas/      Pydantic request/response schemas
 │   │   ├── auth/         dependencies.py — authentication + RBAC enforcement
 │   │   ├── core/         Config, logging
@@ -34,8 +33,13 @@ model-independence design and `docs/adr/` for key decisions.
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
 │   └── .env.example
-├── frontend/            Minimal Vite + TypeScript frontend
+├── frontend/            React + TypeScript + Vite chat frontend
 │   ├── src/
+│   │   ├── api/          client.ts, stream.ts (SSE), auth.ts, chats.ts, quota.ts, types.ts
+│   │   ├── components/   Sidebar, ChatView, MessageBubble, Markdown, Composer, EditBox, ModelSelector, UsagePanel, RevisionNav
+│   │   ├── pages/         LoginPage, RegisterPage, ChatPage
+│   │   ├── context/       AuthContext
+│   │   └── styles.css
 │   └── .env.example
 ├── nginx/
 │   └── nginx.conf.template
@@ -168,6 +172,28 @@ The dev server proxies API calls to `VITE_API_BASE_URL` (defaults to
 `/api/v1`, intended to be routed through Nginx in deployed
 environments).
 
+## Frontend — Local Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The dev server (Vite) proxies `/api/*` to `http://localhost:8000`
+(`vite.config.ts`), so run the backend locally first (see above). Open
+the printed local URL, register an account, and either approve it
+directly in the database for local testing or use an existing
+Manager/Owner account to approve it via the API — see "Chat API"
+above and Phase 3's registration flow.
+
+```bash
+npm run build   # type-checks (tsc) and produces frontend/dist
+```
+
+See `ARCHITECTURE.md`'s "Chat Frontend" section and ADR 0011 for the
+architecture.
+
 ## Nginx
 
 `nginx/nginx.conf.template` is a starting point for the production
@@ -199,22 +225,18 @@ file with real values.
 **Phase 5 — Qwen Model Integration: complete.**
 **Phase 6 — Chat Backend: complete.**
 **Phase 7 — Token Quotas and Chat Limits: complete.**
+**Phase 8 — AI Chat Frontend: complete.**
 
-Implemented: project structure, environment-driven configuration,
-database engine/session setup, structured logging, health check
-endpoint, Nginx template, minimal frontend, documentation, the full
-relational data model with Alembic migrations, registration with
-manager-approval workflow, login/logout with revocable JWT sessions,
-role-based authorization, the full model abstraction layer, two real
-Qwen model providers, the complete chat backend (CRUD, streaming,
-revisions, undo/redo, ownership), and — as of Phase 7 — configurable
-chat limits and token quotas (global default / group override / user
-override), a documented renewal policy, concurrency-safe enforcement
-via PostgreSQL advisory locks, and a documented no-charge-on-failure
-policy. See `ARCHITECTURE.md`'s "Quotas and Limits" section and
-ADR 0010.
+Implemented: the full backend (Phases 1-7 — foundation, data model,
+auth/RBAC, model abstraction, Qwen integration, chat backend with
+streaming/revisions, quotas/limits) and — as of Phase 8 — a complete
+React chat frontend: login/registration with pending-approval
+messaging, new chat, chat history with search/rename/archive/delete,
+model selector, streaming responses, markdown and code blocks with
+copy, edit prompt, regenerate, undo/redo, a live token-usage bar with
+renewal countdown, chat-limit awareness, and error/loading states
+throughout. See `ARCHITECTURE.md`'s "Chat Frontend" section and
+ADR 0011.
 
 Not yet implemented (by design — later phases): background workers,
-general API rate limiting enforcement, password reset flow, a chat UI
-in the frontend (the backend API is complete; `frontend/` remains a
-foundation health-check page).
+general API rate limiting enforcement, password reset flow.

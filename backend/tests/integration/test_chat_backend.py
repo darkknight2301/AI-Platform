@@ -163,6 +163,26 @@ def _parse_sse(body: str) -> list[dict]:
     return events
 
 
+# --- model listing (Phase 8) ------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_available_models_any_authenticated_user(client: AsyncClient, pg_session):
+    await _make_model(pg_session)
+    await _make_active_user(pg_session, username="modellister")
+    token = await _login(client, "modellister")
+
+    resp = await client.get("/api/v1/models", headers=_auth_headers(token))
+    assert resp.status_code == 200
+    keys = {m["model_key"] for m in resp.json()["models"]}
+    assert MOCK_MODEL_KEY in keys
+
+
+@pytest.mark.asyncio
+async def test_list_available_models_requires_auth(client: AsyncClient):
+    resp = await client.get("/api/v1/models")
+    assert resp.status_code == 401
+
+
 # --- chat CRUD -----------------------------------------------------------
 
 @pytest.mark.asyncio

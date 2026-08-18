@@ -1,7 +1,9 @@
 # 0004 — Use a minimal Vite/TypeScript frontend for the foundation phase
 
 ## Status
-Accepted (foundation only — subject to revisit)
+Superseded by ADR 0011 (Phase 8 introduced React once real chat UI
+requirements existed — exactly the trigger this ADR anticipated).
+Kept for historical rationale.
 
 ## Context
 No existing frontend exists in this repository. Common Instructions

@@ -65,7 +65,22 @@ combined with credentialed requests must not be used in production.
 
 ## Current Scope
 
-As of Phase 7:
+As of Phase 8:
+
+- The chat frontend (React SPA, `frontend/`) stores the JWT access
+  token in `localStorage` and sends it as a standard `Authorization:
+  Bearer` header on every API call — never as a cookie, so it isn't
+  automatically attached to requests to other origins. The frontend
+  performs no server-side rendering and holds no secrets of its own
+  (no API keys, no database credentials); its only sensitive artifact
+  is the user's own access token, scoped to that user's own session
+  (revocable via logout — Phase 3).
+- No attachment/file-upload/image-upload code path exists anywhere in
+  the frontend (explicitly excluded, Phase 8) — there is no
+  multipart-upload attack surface to consider.
+- Markdown rendering (`react-markdown`) does not execute raw HTML from
+  message content by default; message content is always treated as
+  data, never as trusted markup.
 
 - Chat and token usage are now bounded: every chat creation and model
   call is gated by `src/services/quota_service.py`'s concurrency-safe
