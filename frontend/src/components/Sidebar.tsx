@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, LogOut, MessageSquarePlus, MoreHorizontal, Pencil, Search, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  Archive,
+  LayoutDashboard,
+  LogOut,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Pencil,
+  Search,
+  Trash2,
+} from "lucide-react";
 import type { ChatSummary, QuotaStatusResponse, UserPublic } from "../api/types";
 import { UsagePanel } from "./UsagePanel";
 
@@ -146,6 +156,16 @@ export function Sidebar({
       {user && (
         <div className="user-footer-row" style={{ padding: "0 0.85rem 0.85rem" }}>
           <span className="user-footer-name">{user.username}</span>
+          {user.role !== "USER" && (
+            <Link
+              to="/dashboard"
+              className="logout-btn"
+              title="Admin dashboard"
+              aria-label="Admin dashboard"
+            >
+              <LayoutDashboard size={15} />
+            </Link>
+          )}
           <button className="logout-btn" onClick={onLogout} title="Log out" aria-label="Log out">
             <LogOut size={15} />
           </button>

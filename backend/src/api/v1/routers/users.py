@@ -18,11 +18,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.dependencies import can_manage_group, get_current_user, require_min_role
 from src.db.session import get_db
 from src.models.enums import Role, UserStatus
+from src.models.group import Group
 from src.models.user import User
-from src.repositories import usage_repository
+from src.repositories import audit_log_repository, group_repository, usage_repository
+from src.schemas.admin import AuditLogListResponse, AuditLogOut
 from src.schemas.quota import ChatLimitOut, QuotaStatusResponse, TokenQuotaOut
 from src.schemas.usage import UsageRecordOut, UsageReportResponse
-from src.schemas.user import ApprovalActionResponse, UserListResponse, UserSummary
+from src.schemas.user import (
+    ApprovalActionResponse,
+    GroupSummary,
+    UserListResponse,
+    UserSummary,
+)
 from src.services import quota_service, user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -69,6 +76,49 @@ async def list_users(
     return UserListResponse(
         users=[UserSummary.model_validate(u) for u in users], total=len(users)
     )
+
+
+@router.get("/me/activity", response_model=AuditLogListResponse)
+async def get_my_activity(
+    limit: int = 100,
+    offset: int = 0,
+    current_user: User = Depends(require_min_role(Role.MANAGER)),
+    session: AsyncSession = Depends(get_db),
+) -> AuditLogListResponse:
+    """Manager dashboard's "Authorized activity" panel: audit-log entries
+    for actions this caller performed (approvals/rejections/etc). Self-scoped
+    by construction — see `audit_log_repository.list_by_actor`. Owners also
+    pass `require_min_role(MANAGER)` but have `/admin/audit-logs` for the
+    global view; this endpoint only ever returns the caller's own entries.
+    """
+    entries = await audit_log_repository.list_by_actor(
+        session, current_user.id, limit=limit, offset=offset
+    )
+    return AuditLogListResponse(
+        entries=[AuditLogOut.model_validate(e) for e in entries], total=len(entries)
+    )
+
+
+@router.get("/groups/{group_id}", response_model=GroupSummary)
+async def get_group(
+    group_id: uuid.UUID,
+    current_user: User = Depends(require_min_role(Role.MANAGER)),
+    session: AsyncSession = Depends(get_db),
+) -> Group:
+    """Own group only for a Manager (any group for an Owner) — same
+    `can_manage_group` scoping as `get_group_usage` below. Lets the
+    Manager dashboard show a group name instead of a bare UUID without
+    granting access to `/admin/groups` (Owner-only, includes quota
+    overrides)."""
+    if not can_manage_group(current_user, group_id):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to view this group.",
+        )
+    group = await group_repository.get_by_id(session, group_id)
+    if group is None:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Group not found.")
+    return group
 
 
 @router.get("/groups/{group_id}/usage", response_model=UsageReportResponse)

@@ -6,7 +6,21 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from src.models.enums import Role, UserStatus
+from src.models.enums import GroupStatus, Role, UserStatus
+
+
+class GroupSummary(BaseModel):
+    """Minimal group info visible to a Manager of that group (or an
+    Owner). Deliberately excludes the quota/chat-limit override fields
+    on `GroupOut` (schemas/admin.py) — those are Owner-only configuration,
+    not something a Manager needs to see to run their group's dashboard.
+    """
+
+    id: uuid.UUID
+    name: str
+    status: GroupStatus
+
+    model_config = {"from_attributes": True}
 
 
 class UserSummary(BaseModel):

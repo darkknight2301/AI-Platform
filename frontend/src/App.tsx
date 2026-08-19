@@ -3,6 +3,9 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ChatPage } from "./pages/ChatPage";
+import { ManagerDashboardPage } from "./pages/ManagerDashboardPage";
+import { DeveloperDashboardPage } from "./pages/DeveloperDashboardPage";
+import { OwnerDashboardPage } from "./pages/OwnerDashboardPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();
@@ -23,6 +26,25 @@ function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Renders the dashboard for the caller's own role. A User (no elevated
+ * role) has no dashboard and is bounced back to chat — this is a UX
+ * convenience only, not the security boundary. The backend independently
+ * rejects any unauthorized API call regardless of what this component
+ * renders (see backend/src/auth/dependencies.py, admin.py, system.py). */
+function RoleDashboard() {
+  const { user } = useAuth();
+  switch (user?.role) {
+    case "MANAGER":
+      return <ManagerDashboardPage />;
+    case "DEVELOPER":
+      return <DeveloperDashboardPage />;
+    case "OWNER":
+      return <OwnerDashboardPage />;
+    default:
+      return <Navigate to="/" replace />;
+  }
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -40,6 +62,14 @@ function AppRoutes() {
           <RedirectIfAuthed>
             <RegisterPage />
           </RedirectIfAuthed>
+        }
+      />
+      <Route
+        path="/dashboard"
+        element={
+          <RequireAuth>
+            <RoleDashboard />
+          </RequireAuth>
         }
       />
       <Route

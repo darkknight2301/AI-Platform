@@ -39,3 +39,25 @@ async def create(
 async def list_all(session: AsyncSession, *, limit: int = 100, offset: int = 0) -> list[AuditLog]:
     stmt = select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit).offset(offset)
     return list((await session.scalars(stmt)).all())
+
+
+async def list_by_actor(
+    session: AsyncSession, actor_user_id: uuid.UUID, *, limit: int = 100, offset: int = 0
+) -> list[AuditLog]:
+    """Entries where `actor_user_id` is the acting user.
+
+    Used for the Manager dashboard's "Authorized activity" panel: a
+    Manager only ever needs to see the actions *they themselves*
+    performed (approvals/rejections). Scoping by actor_user_id is
+    inherently safe here — there is no query-parameter or path
+    variable a Manager could manipulate to see another actor's
+    entries, unlike a group_id-based filter would require.
+    """
+    stmt = (
+        select(AuditLog)
+        .where(AuditLog.actor_user_id == actor_user_id)
+        .order_by(AuditLog.timestamp.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list((await session.scalars(stmt)).all())

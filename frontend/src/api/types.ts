@@ -108,3 +108,147 @@ export interface QuotaStatusResponse {
   token_quota: TokenQuotaOut;
   chat_limit: ChatLimitOut;
 }
+
+// --- Phase 9: Administrative Interfaces --------------------------------
+
+export type GroupStatus = "ACTIVE" | "INACTIVE";
+export type AuditResult = "SUCCESS" | "FAILURE";
+
+export interface UserSummary {
+  id: string;
+  username: string;
+  email: string;
+  status: UserStatus;
+  role: Role;
+  group_id: string | null;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface UserListResponse {
+  users: UserSummary[];
+  total: number;
+}
+
+export interface ApprovalActionResponse {
+  id: string;
+  status: UserStatus;
+  detail: string;
+}
+
+/** Own-group summary — what a Manager may see about their group. */
+export interface GroupSummary {
+  id: string;
+  name: string;
+  status: GroupStatus;
+}
+
+/** Full group record with quota overrides — Owner (`/admin/groups`) only. */
+export interface GroupOut extends GroupSummary {
+  max_active_chats_override: number | null;
+  token_quota_override: number | null;
+  created_at: string;
+}
+
+export interface UsageRecordOut {
+  id: string;
+  chat_id: string | null;
+  message_id: string | null;
+  model_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  timestamp: string;
+}
+
+export interface UsageReportResponse {
+  records: UsageRecordOut[];
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+}
+
+export interface AuditLogOut {
+  id: string;
+  actor_user_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  timestamp: string;
+  request_id: string | null;
+  result: AuditResult;
+  audit_metadata: Record<string, unknown>;
+}
+
+export interface AuditLogListResponse {
+  entries: AuditLogOut[];
+  total: number;
+}
+
+/** Owner's model record — includes fields needed to create/edit a model. */
+export interface AdminModelOut {
+  id: string;
+  model_key: string;
+  display_name: string;
+  category: ModelCategory;
+  provider: string;
+  version: string;
+  is_enabled: boolean;
+  capabilities: string[];
+  config_metadata: Record<string, unknown>;
+}
+
+export interface GlobalConfigOut {
+  app_name: string;
+  environment: string;
+  rate_limit_requests_per_minute: number;
+  access_token_expire_minutes: number;
+  default_max_active_chats: number;
+  default_token_quota: number;
+  token_quota_renewal_policy: string;
+}
+
+export interface LogEntryOut {
+  timestamp: string;
+  level: string;
+  logger: string;
+  message: string;
+}
+
+export interface RecentLogsResponse {
+  entries: LogEntryOut[];
+}
+
+export interface ModelStatusOut {
+  id: string;
+  model_key: string;
+  display_name: string;
+  category: ModelCategory;
+  provider: string;
+  version: string;
+  is_enabled: boolean;
+}
+
+export interface ModelStatusResponse {
+  models: ModelStatusOut[];
+}
+
+export interface DiagnosticsResponse {
+  environment: string;
+  database_reachable: boolean;
+  server_time: string;
+  uptime_seconds: number;
+}
+
+export interface PerformanceResponse {
+  total_requests: number;
+  requests_by_status_class: Record<string, number>;
+  average_response_time_ms: number;
+  uptime_seconds: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  environment: string;
+  version: string;
+}
