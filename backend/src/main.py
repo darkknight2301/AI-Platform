@@ -91,7 +91,12 @@ async def _security_headers(request, call_next):
 
 app.add_middleware(PerformanceMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
-app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_requests_per_minute)
+app.add_middleware(
+    RateLimitMiddleware,
+    requests_per_minute=settings.rate_limit_requests_per_minute,
+    trust_proxy_headers=settings.trust_proxy_headers,
+    redis_url=settings.rate_limit_redis_url,
+)
 app.add_middleware(RequestIDMiddleware)
 
 

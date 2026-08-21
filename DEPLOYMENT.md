@@ -197,7 +197,18 @@ Production ASGI process: `backend/gunicorn.conf.py`, using
 | Backend replicas | 1 (with `--reload`) | 1 | 4 (tune to load — see `PERFORMANCE.md`) |
 | Database | containerized Postgres | managed/shared instance recommended | managed instance, automated backups |
 | Qwen | optional / often disabled | optional, can be smaller/shared | required, sized for real traffic |
-| Rate limits | app default (60/min) | same as production | same as app default, tune per observed traffic |
+| Rate limits | app default (60/min), in-memory, keyed on the raw connection address | app default, Redis-backed, keyed on `X-Forwarded-For` (see below) | same as staging, tune per observed traffic |
+| Redis | not run | `redis` service (`docker-compose.prod.yml`) | same |
+
+`docker-compose.prod.yml` runs a `redis` service and sets
+`TRUST_PROXY_HEADERS=true`/`RATE_LIMIT_REDIS_URL=redis://redis:6379/0`
+on the backend, because staging and production both put nginx in front
+of an `expose`-only backend — the precondition `TRUST_PROXY_HEADERS`
+requires (see `SECURITY.md`). `docker-compose.yml` (development) does
+neither: the backend is reachable directly there, so trusting
+proxy-set headers would let any local caller forge its rate-limit
+identity, and a single dev instance has no cross-replica counter to
+share in the first place.
 
 Staging exists specifically to catch problems (migrations, config
 drift, real request volume) that a local dev environment can't

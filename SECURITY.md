@@ -151,14 +151,32 @@ As of Phase 8:
   `main.py`; unhandled exceptions are caught, logged, and re-raised so
   Starlette's own 500 handling is unchanged.
 - **Rate limiting / brute-force protection**: `RateLimitMiddleware`
-  enforces `RATE_LIMIT_REQUESTS_PER_MINUTE` per client IP, in-memory
-  (process-local — the same documented limitation as
-  `PerformanceMetrics`; a multi-instance deployment needs a shared
-  store). Separately, `auth_service.authenticate` locks out an
+  enforces `RATE_LIMIT_REQUESTS_PER_MINUTE` per caller. The caller's
+  identity comes from `resolve_client_key()` (`src/core/middleware.py`):
+  by default the raw connection address (correct when the app is
+  reachable directly, e.g. local dev/tests), or `X-Forwarded-For`/
+  `X-Real-IP` when `TRUST_PROXY_HEADERS=true` — which must only be set
+  when the backend is reachable *exclusively* through a proxy that sets
+  those headers itself (nginx does; see `nginx/nginx.conf.template`).
+  `docker-compose.prod.yml` sets `TRUST_PROXY_HEADERS=true` because the
+  backend there is `expose`-only, never published on the host — the
+  precondition the setting requires. Earlier revisions of this
+  middleware keyed on the raw connection address unconditionally, which
+  behind that same nginx topology collapsed every request to nginx's
+  upstream address rather than the real client; this has been fixed.
+  Storage is pluggable: in-memory (`InMemoryRateLimitStore`,
+  process-local, the default) or Redis (`RedisRateLimitStore`, shared
+  across replicas, selected by setting `RATE_LIMIT_REDIS_URL`) —
+  `docker-compose.prod.yml` runs a `redis` service and wires this by
+  default, since that compose file defaults to `BACKEND_REPLICAS=2`.
+  The Redis path fails open (allows the request, logs a warning) on any
+  Redis error, since this is defense-in-depth, not the primary access
+  control. Separately, `auth_service.authenticate` locks out an
   identifier (username/email) for 15 minutes after 5 recent `LOGIN`
   `FAILURE` audit entries — this check is driven by the audit log
   itself, not a separate in-memory counter, so it survives process
-  restarts and is consistent across instances.
+  restarts and is consistent across instances regardless of the
+  rate-limiter configuration above.
 - **CSRF**: not implemented, deliberately. The API is Bearer-token
   authenticated (`Authorization` header from `localStorage`), never
   cookie-based — see "Current Scope" above. CSRF relies on the
@@ -204,8 +222,6 @@ As of Phase 8:
 
 ## Planned (Later Phases)
 
-- A shared (non-process-local) store for rate limiting once this runs
-  as more than one instance.
 - Request queuing/backpressure at the model layer so the model
   infrastructure's concurrency limits are never exceeded regardless of
   web-tier load.

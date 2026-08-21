@@ -1,5 +1,23 @@
 # Final Review (Phase 13)
 
+> **Post-Phase-13 remediation note:** an external code review after
+> this document was written identified that `RateLimitMiddleware` keyed
+> on the raw connection address unconditionally, which — behind the
+> nginx topology this repo's own `docker-compose.prod.yml` describes —
+> collapsed every client to nginx's own upstream address rather than
+> the real caller, silently turning the per-client limit into a
+> shared-across-all-clients one. That review also reiterated the
+> already-known process-local-storage limitation below as a P1. Both
+> are now fixed: `RateLimitMiddleware` resolves the caller via
+> `X-Forwarded-For`/`X-Real-IP` when `TRUST_PROXY_HEADERS=true` (only
+> safe, and only set, in the `expose`-only-backend topology), and uses
+> a Redis-backed store when `RATE_LIMIT_REDIS_URL` is set —
+> `docker-compose.prod.yml` now runs `redis` and sets both by default.
+> See `SECURITY.md` and `PERFORMANCE.md` for the current, accurate
+> description; the "Technical debt" and "Security risks" sections below
+> are left as originally written, as the historical record of what
+> Phase 13 itself knew, rather than silently edited.
+
 This is a status report, not a marketing summary. Every claim below is
 labeled by how it was verified, because those are different strengths
 of evidence and collapsing them into a flat "✅ works" list would be

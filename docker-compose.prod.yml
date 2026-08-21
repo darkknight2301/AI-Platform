@@ -22,6 +22,24 @@ services:
       SECRET_KEY: ${SECRET_KEY}
     restart: "no"
 
+  # Shared store for RateLimitMiddleware once BACKEND_REPLICAS > 1 (the
+  # default here is 2 — see below). Without this, each backend replica
+  # enforces RATE_LIMIT_REQUESTS_PER_MINUTE independently, so the real
+  # aggregate limit silently scales with replica count. See
+  # PERFORMANCE.md's "Scalability bottlenecks" and
+  # src/core/middleware.py::RedisRateLimitStore.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    expose:
+      - "6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -36,18 +54,27 @@ services:
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
       LOG_JSON: "true"
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      # Safe here specifically because the backend is `expose`-only
+      # below — nginx is the only path in, and it sets these headers
+      # itself (nginx/nginx.conf.template). Do not set this to true in
+      # a topology where the backend is reachable directly.
+      TRUST_PROXY_HEADERS: "true"
+      RATE_LIMIT_REDIS_URL: redis://redis:6379/0
       QWEN_CODER_ENABLED: ${QWEN_CODER_ENABLED:-false}
       QWEN_CODER_ENDPOINT_URL: ${QWEN_CODER_ENDPOINT_URL:-}
       QWEN_NLP_ENABLED: ${QWEN_NLP_ENABLED:-false}
       QWEN_NLP_ENDPOINT_URL: ${QWEN_NLP_ENDPOINT_URL:-}
     # Not published on the host — only nginx (below) and other
     # containers on this network can reach it. See DEPLOYMENT.md's
-    # "do not expose backend/model ports publicly" note.
+    # "do not expose backend/model ports publicly" note. This is also
+    # the precondition for TRUST_PROXY_HEADERS above being safe.
     expose:
       - "8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     deploy:
       replicas: ${BACKEND_REPLICAS:-2}
       restart_policy:

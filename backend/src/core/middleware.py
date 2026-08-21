@@ -13,12 +13,45 @@ import logging
 import time
 import uuid
 from collections import defaultdict
+from typing import Protocol
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_client_key(request: Request, *, trust_proxy_headers: bool) -> str:
+    """Determine the identifier RateLimitMiddleware buckets a request by.
+
+    When `trust_proxy_headers` is False (the safe default), this is
+    always the raw ASGI transport address -- correct when the app is
+    reachable directly (dev, tests) since nothing upstream could have
+    set proxy headers legitimately.
+
+    When True, the caller is asserting the app sits behind a proxy that
+    (a) is the *only* way to reach it and (b) itself sets/overwrites
+    `X-Forwarded-For`/`X-Real-IP` rather than passing a client-supplied
+    value through unchanged (nginx's `proxy_add_x_forwarded_for` does
+    this correctly -- see nginx/nginx.conf.template). Under that
+    assumption the left-most `X-Forwarded-For` entry is the original
+    client. If both assumptions don't hold (app reachable directly, or a
+    proxy that blindly forwards client headers), enabling this setting
+    lets any caller forge their bucket key and defeats the limiter --
+    it must not be enabled outside that specific topology.
+    """
+    if trust_proxy_headers:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            candidate = forwarded_for.split(",")[0].strip()
+            if candidate:
+                return candidate
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip and real_ip.strip():
+            return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
 
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -103,35 +136,138 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """In-memory fixed-window rate limiter, keyed by client IP.
+class RateLimitStore(Protocol):
+    """Where RateLimitMiddleware records and checks hits.
 
-    Process-local — same documented limitation as `PerformanceMetrics`
-    above (a real multi-instance deployment needs a shared store, e.g.
-    Redis). Sufficient as the foundation this phase establishes.
+    `hit()` records one request for `key` and returns whether it should
+    be allowed (i.e. the count for `key` within `window_seconds`,
+    including this request, is still <= `limit`). Kept intentionally
+    small so alternate backends (see `RedisRateLimitStore`) are a
+    drop-in swap for `InMemoryRateLimitStore` — RateLimitMiddleware
+    never branches on which one it has.
+    """
+
+    async def hit(self, key: str, *, limit: int, window_seconds: float) -> bool: ...
+
+
+class InMemoryRateLimitStore:
+    """Sliding-window counter kept in process memory.
+
+    Correct for a single instance. Process-local: each backend replica
+    gets its own independent budget, so the *effective* limit under N
+    replicas is N times the configured value — see PERFORMANCE.md.
+    This is the default store; use `RedisRateLimitStore` (selected via
+    `Settings.rate_limit_redis_url`) once running more than one replica.
+    """
+
+    def __init__(self) -> None:
+        self._hits: dict[str, list[float]] = defaultdict(list)
+
+    async def hit(self, key: str, *, limit: int, window_seconds: float) -> bool:
+        now = time.monotonic()
+        window_start = now - window_seconds
+        hits = self._hits[key]
+        while hits and hits[0] < window_start:
+            hits.pop(0)
+        if len(hits) >= limit:
+            return False
+        hits.append(now)
+        return True
+
+
+class RedisRateLimitStore:
+    """Sliding-window counter backed by a Redis sorted set, shared across
+    every backend replica — fixes the process-local under-enforcement
+    `InMemoryRateLimitStore` has once more than one instance is running
+    (see PERFORMANCE.md's "Scalability bottlenecks").
+
+    Fails OPEN on any Redis error (logs a warning, allows the request).
+    Rate limiting here is defense-in-depth, not the primary access
+    control — auth/RBAC own that (see auth/dependencies.py) — so an
+    unreachable Redis should degrade this specific protection rather
+    than take the whole API down.
+    """
+
+    def __init__(self, redis_url: str) -> None:
+        try:
+            import redis.asyncio as redis_asyncio
+        except ImportError as exc:  # pragma: no cover - exercised only when misconfigured
+            raise RuntimeError(
+                "rate_limit_redis_url is configured but the 'redis' package "
+                "is not installed. Add `redis` to backend/requirements.txt, "
+                "or unset RATE_LIMIT_REDIS_URL to use the in-memory limiter."
+            ) from exc
+        self._redis = redis_asyncio.from_url(redis_url, decode_responses=True)
+
+    async def hit(self, key: str, *, limit: int, window_seconds: float) -> bool:
+        now = time.time()
+        window_start = now - window_seconds
+        redis_key = f"ratelimit:{key}"
+        member = f"{now:.6f}:{uuid.uuid4().hex}"
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.zremrangebyscore(redis_key, 0, window_start)
+                pipe.zadd(redis_key, {member: now})
+                pipe.zcard(redis_key)
+                pipe.expire(redis_key, int(window_seconds) + 1)
+                _, _, count, _ = await pipe.execute()
+            return count <= limit
+        except Exception:
+            logger.warning(
+                "rate_limit_redis_unavailable",
+                extra={"redis_key": redis_key},
+                exc_info=True,
+            )
+            return True
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Sliding-window rate limiter, keyed by caller identity.
+
+    The identity key comes from `resolve_client_key()` — by default the
+    raw ASGI transport address, or `X-Forwarded-For`/`X-Real-IP` when
+    `trust_proxy_headers=True` and the app is reachable only through a
+    proxy that sets those headers itself (see that function's docstring
+    for why the default is False). The storage backend is pluggable
+    (`RateLimitStore`) so this class behaves identically whether counts
+    are process-local (`InMemoryRateLimitStore`) or shared across
+    replicas via Redis (`RedisRateLimitStore`).
+
     Health checks are exempt so load balancers aren't throttled.
     """
 
     _EXEMPT_PATHS = {"/api/v1/health"}
 
-    def __init__(self, app, requests_per_minute: int) -> None:
+    def __init__(
+        self,
+        app,
+        requests_per_minute: int,
+        *,
+        trust_proxy_headers: bool = False,
+        redis_url: str | None = None,
+        store: RateLimitStore | None = None,
+    ) -> None:
         super().__init__(app)
         self._limit = requests_per_minute
         self._window_seconds = 60.0
-        self._hits: dict[str, list[float]] = defaultdict(list)
+        self._trust_proxy_headers = trust_proxy_headers
+        if store is not None:
+            self._store: RateLimitStore = store
+        elif redis_url:
+            self._store = RedisRateLimitStore(redis_url)
+        else:
+            self._store = InMemoryRateLimitStore()
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path in self._EXEMPT_PATHS:
             return await call_next(request)
 
-        client_key = request.client.host if request.client else "unknown"
-        now = time.monotonic()
-        window_start = now - self._window_seconds
-        hits = self._hits[client_key]
-        while hits and hits[0] < window_start:
-            hits.pop(0)
+        client_key = resolve_client_key(request, trust_proxy_headers=self._trust_proxy_headers)
+        allowed = await self._store.hit(
+            client_key, limit=self._limit, window_seconds=self._window_seconds
+        )
 
-        if len(hits) >= self._limit:
+        if not allowed:
             logger.warning(
                 "rate_limit_exceeded",
                 extra={
@@ -147,7 +283,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": "60"},
             )
 
-        hits.append(now)
         return await call_next(request)
 
 

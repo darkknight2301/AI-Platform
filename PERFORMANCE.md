@@ -106,15 +106,26 @@ Postgres max_connections`, or front the database with PgBouncer in
 transaction-pooling mode (standard practice for this exact multi-worker
 fan-out, and out of scope for the application code itself).
 
-### 3. Rate limiter and performance metrics are process-local — documented (Phase 10 finding, still true)
+### 3. Rate limiter and performance metrics are process-local — rate limiter fixed, metrics still process-local by design
 
-`RateLimitMiddleware` and `PerformanceMiddleware` both keep in-memory
-state per process. Already flagged in `SECURITY.md`/this file as a
-known limitation of a single-instance deployment; a horizontally
-scaled deployment (multiple API processes/containers) needs a shared
-store (Redis) for both to behave correctly across instances. Not
-fixed here — doing so is an infrastructure dependency, not a bug in
-what exists.
+`RateLimitMiddleware` and `PerformanceMiddleware` both originally kept
+in-memory state per process, under-enforcing/under-reporting once
+horizontally scaled. `RateLimitMiddleware` is now backed by a pluggable
+`RateLimitStore`: in-memory by default (unchanged, correct for a single
+instance) or `RedisRateLimitStore` when `RATE_LIMIT_REDIS_URL` is set,
+which gives every replica a shared, correctly-enforced counter.
+`docker-compose.prod.yml` runs a `redis` service and sets this by
+default, since it defaults to `BACKEND_REPLICAS=2`.
+
+`PerformanceMiddleware`/`PerformanceMetrics` remain process-local,
+deliberately: they back a diagnostics endpoint, not a security or
+correctness control, so a per-replica view (or querying each replica
+individually) is an acceptable operational trade-off that doesn't
+justify the same fix. Exporting them to a real metrics backend
+(Prometheus, etc.) instead of Redis-aggregating an ad hoc in-memory
+struct remains the right eventual fix if per-replica visibility stops
+being sufficient — not implemented here, tracked as a future
+improvement rather than a defect.
 
 ### 4. Streaming response duration vs. the request-logging/rate-limit middleware — checked, no issue found
 

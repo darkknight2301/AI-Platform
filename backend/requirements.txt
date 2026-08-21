@@ -11,3 +11,8 @@ python-dotenv==1.2.2
 bcrypt==5.0.0
 PyJWT==2.13.0
 email-validator==2.3.0
+# Only required if RATE_LIMIT_REDIS_URL is set (shared, cross-replica
+# rate limiting — see src/core/middleware.py::RedisRateLimitStore).
+# Deployments that don't set RATE_LIMIT_REDIS_URL don't need this
+# installed; the import is lazy and confined to that one code path.
+redis==5.2.1

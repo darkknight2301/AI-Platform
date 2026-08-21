@@ -85,8 +85,26 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
-    # --- Rate limiting / concurrency (foundation only, enforced later) ----
+    # --- Rate limiting / concurrency ----------------------------------------
     rate_limit_requests_per_minute: int = 60
+    # Whether RateLimitMiddleware (and any other code resolving "the
+    # caller's IP") should trust `X-Forwarded-For`/`X-Real-IP` instead of
+    # the raw ASGI transport address. Only safe to enable when the app is
+    # NOT directly reachable and every request genuinely passes through a
+    # proxy that sets these headers itself (see nginx/nginx.conf.template,
+    # which does) -- otherwise a client can spoof these headers and forge
+    # any key it likes, defeating the limiter entirely. Defaults to False
+    # so local/dev/direct-access deployments keep the safe (if coarser)
+    # behavior; docker-compose.prod.yml sets this to true because the
+    # backend there is `expose`-only, reachable exclusively via nginx.
+    trust_proxy_headers: bool = False
+    # Optional Redis URL (e.g. "redis://redis:6379/0") for a shared,
+    # cross-instance rate-limit counter. When unset, RateLimitMiddleware
+    # falls back to an in-memory, per-process counter -- correct for a
+    # single instance, but under-enforcing once more than one backend
+    # replica is running (each replica gets its own independent budget).
+    # See PERFORMANCE.md's "Scalability bottlenecks" section.
+    rate_limit_redis_url: str | None = None
 
     # --- Model concurrency (Phase 11) ---------------------------------
     # Bounds concurrent in-flight requests *per model_key* at the
