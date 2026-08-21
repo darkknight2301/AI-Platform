@@ -13,9 +13,18 @@ about any specific provider.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
+from collections import defaultdict
+from contextlib import asynccontextmanager
+
+from src.core.config import get_settings
 from src.model_layer.provider_interface import ModelProvider
 from src.model_layer.registry import ModelNotFoundError, ModelRegistry
 from src.models.enums import ModelCategory
+
+logger = logging.getLogger(__name__)
 
 
 class ModelUnavailableError(RuntimeError):
@@ -35,10 +44,52 @@ class ModelRouter:
     policies (load-based, capability-based, per-user overrides) are a
     matter of changing this class's internals; callers are unaffected
     either way, since they only ever see `ModelProvider`.
+
+    Phase 11 adds one more responsibility here: bounding how many
+    requests are in flight to a given model at once
+    (`MODEL_MAX_CONCURRENT_REQUESTS_PER_MODEL`). This is deliberately
+    *not* a web-tier concept (it's not connection pooling, rate
+    limiting, or anything in `core/middleware.py`) — it exists so a
+    burst of API traffic queues at this seam instead of hammering the
+    actual model backend past what it can handle. See
+    `docs/PERFORMANCE.md`, "API scalability vs model inference
+    scalability".
     """
 
     def __init__(self, registry: ModelRegistry) -> None:
         self._registry = registry
+        self._settings = get_settings()
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
+
+    def _semaphore_for(self, model_key: str) -> asyncio.Semaphore:
+        sem = self._semaphores.get(model_key)
+        if sem is None:
+            limit = max(1, self._settings.model_max_concurrent_requests_per_model)
+            sem = asyncio.Semaphore(limit)
+            self._semaphores[model_key] = sem
+        return sem
+
+    @asynccontextmanager
+    async def acquire_slot(self, model_key: str):
+        """Async context manager: hold one of `model_key`'s concurrency
+        slots for the duration of a single generate/stream call. Blocks
+        (queues) if all slots are in use — that queueing *is* the
+        point. Logs when a request actually had to wait, so queue
+        pressure is visible in the structured logs without adding a
+        dedicated metrics system."""
+        sem = self._semaphore_for(model_key)
+        start = time.monotonic()
+        await sem.acquire()
+        wait_ms = (time.monotonic() - start) * 1000
+        if wait_ms > 5:
+            logger.info(
+                "model_request_queued",
+                extra={"model_key": model_key, "queue_wait_ms": round(wait_ms, 2)},
+            )
+        try:
+            yield
+        finally:
+            sem.release()
 
     async def route(self, model_key: str) -> ModelProvider:
         """Resolve an explicit model key to its provider.

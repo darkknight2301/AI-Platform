@@ -34,11 +34,17 @@ from src.db.session import AsyncSessionLocal
 from src.model_layer.schemas import ModelMessage, ModelRequest, ModelResponse
 from src.models.ai_model import AIModel
 from src.models.chat import Chat
-from src.models.enums import ChatStatus, MessageRole
+from src.models.enums import AuditResult, ChatStatus, MessageRole
 from src.models.message import Message
 from src.models.usage import Usage
 from src.models.user import User
-from src.repositories import chat_repository, message_repository, model_repository, quota_repository
+from src.repositories import (
+    audit_log_repository,
+    chat_repository,
+    message_repository,
+    model_repository,
+    quota_repository,
+)
 from src.schemas.message import MessageOut, StreamEventOut
 from src.services import quota_service
 from src.services.chat_service import ChatService
@@ -131,12 +137,23 @@ class ConversationService:
         await self._session.refresh(chat)
         return chat
 
-    async def delete_chat(self, *, user: User, chat_id: uuid.UUID) -> None:
+    async def delete_chat(
+        self, *, user: User, chat_id: uuid.UUID, request_id: str | None = None
+    ) -> None:
         """Soft delete: sets status=DELETED. Never hard-deletes — history
         (including all message revisions) is preserved."""
         chat = await self._get_owned_chat(user, chat_id)
         chat.status = ChatStatus.DELETED
         chat.revision += 1
+        await audit_log_repository.create(
+            self._session,
+            actor_user_id=user.id,
+            action="DELETE_CHAT",
+            result=AuditResult.SUCCESS,
+            target_type="chat",
+            target_id=str(chat_id),
+            request_id=request_id,
+        )
         await self._session.commit()
 
     async def get_history(
@@ -340,6 +357,16 @@ class ConversationService:
         )
         self._session.add(new_user_message)
         await self._session.flush()
+
+        await audit_log_repository.create(
+            self._session,
+            actor_user_id=user.id,
+            action="PROMPT_EDIT",
+            result=AuditResult.SUCCESS,
+            target_type="message",
+            target_id=str(root_id),
+            request_id=request_id,
+        )
 
         # If a paired assistant reply already exists at the next slot,
         # regenerate it for the edited prompt.

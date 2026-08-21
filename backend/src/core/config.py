@@ -88,6 +88,16 @@ class Settings(BaseSettings):
     # --- Rate limiting / concurrency (foundation only, enforced later) ----
     rate_limit_requests_per_minute: int = 60
 
+    # --- Model concurrency (Phase 11) ---------------------------------
+    # Bounds concurrent in-flight requests *per model_key* at the
+    # ModelRouter seam (src/model_layer/router.py) — separate from, and
+    # upstream of, whatever concurrency the model backend itself can
+    # handle. A burst of API traffic queues here rather than all
+    # reaching the backend simultaneously. Tune per the actual model
+    # backend's real capacity; 4 is a conservative default for a single
+    # small inference server.
+    model_max_concurrent_requests_per_model: int = 4
+
     # --- Quotas (Phase 7) --------------------------------------------------
     # System-wide defaults. Group/user overrides live in the database
     # (Group.max_active_chats_override / User.max_active_chats_override

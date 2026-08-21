@@ -1,0 +1,97 @@
+# Staging/production. Same compose file for both — see DEPLOYMENT.md,
+# "Environments": staging and production differ in secrets, domain,
+# replica counts, and Postgres being managed vs. self-hosted, not in
+# topology. Run with an environment-specific .env file:
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.staging up -d
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+#
+# Does not run Postgres or Qwen as part of this stack by default —
+# both are expected to be managed services reachable via DATABASE_URL
+# / QWEN_*_ENDPOINT_URL (see DEPLOYMENT.md, "Database" and "Model
+# Serving"). A self-hosted Postgres service is included but commented
+# out for smaller deployments that want one.
+services:
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: "false"
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
+      SECRET_KEY: ${SECRET_KEY}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS}
+      LOG_JSON: "true"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      QWEN_CODER_ENABLED: ${QWEN_CODER_ENABLED:-false}
+      QWEN_CODER_ENDPOINT_URL: ${QWEN_CODER_ENDPOINT_URL:-}
+      QWEN_NLP_ENABLED: ${QWEN_NLP_ENABLED:-false}
+      QWEN_NLP_ENDPOINT_URL: ${QWEN_NLP_ENDPOINT_URL:-}
+    # Not published on the host — only nginx (below) and other
+    # containers on this network can reach it. See DEPLOYMENT.md's
+    # "do not expose backend/model ports publicly" note.
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      replicas: ${BACKEND_REPLICAS:-2}
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    environment:
+      SERVER_NAME: ${SERVER_NAME}
+      SSL_CERT_PATH: ${SSL_CERT_PATH:-/etc/nginx/ssl/fullchain.pem}
+      SSL_KEY_PATH: ${SSL_KEY_PATH:-/etc/nginx/ssl/privkey.pem}
+      API_UPSTREAM: backend:8000
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ${SSL_CERT_DIR:-./ssl}:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+
+  # Uncomment for a deployment that self-hosts Postgres instead of
+  # using a managed database service:
+  # postgres:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: ${POSTGRES_DB}
+  #     POSTGRES_USER: ${POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #   volumes:
+  #     - postgres_prod_data:/var/lib/postgresql/data
+  #   expose:
+  #     - "5432"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 10
+
+# volumes:
+#   postgres_prod_data:

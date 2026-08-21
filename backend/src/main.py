@@ -15,13 +15,19 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.v1.router import api_router
 from src.core.config import get_settings
 from src.core.logging import configure_logging
-from src.core.middleware import PerformanceMiddleware, RequestIDMiddleware
+from src.core.middleware import (
+    PerformanceMiddleware,
+    RateLimitMiddleware,
+    RequestIDMiddleware,
+    RequestLoggingMiddleware,
+)
 from src.model_layer.bootstrap import close_providers, register_default_providers
 from src.model_layer.registry import ModelRegistry
 from src.model_layer.router import ModelRouter
@@ -69,7 +75,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    """Defense-in-depth: nginx (see nginx/nginx.conf.template) sets these
+    in front of the app, but the API is also reachable directly in dev/
+    tests, so set them here too rather than depending solely on the proxy."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
+
 app.add_middleware(PerformanceMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_requests_per_minute)
 app.add_middleware(RequestIDMiddleware)
+
+
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request, exc: HTTPException):
+    # Stash the exception type so RequestLoggingMiddleware can include
+    # it in the structured log line without changing the response body.
+    request.state.error_type = type(exc).__name__
+    return await http_exception_handler(request, exc)
+
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)

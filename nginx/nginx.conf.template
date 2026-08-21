@@ -8,6 +8,10 @@
 #   __SERVER_NAME__      e.g. app.example.com
 #   __SSL_CERT_PATH__    path to fullchain.pem (staging/production only)
 #   __SSL_KEY_PATH__     path to privkey.pem   (staging/production only)
+#   __API_UPSTREAM__     host:port of the backend — "127.0.0.1:8000" for
+#                        a bare-metal/systemd deploy, "backend:8000" for
+#                        docker-compose.prod.yml (Docker's embedded DNS
+#                        round-robins this across all replicas)
 
 worker_processes auto;
 
@@ -25,6 +29,10 @@ http {
     sendfile        on;
     keepalive_timeout 65;
 
+    gzip on;
+    gzip_types text/css application/javascript application/json;
+    gzip_min_length 1024;
+
     # Reasonable default; the app enforces its own limits too.
     client_max_body_size 10m;
 
@@ -34,10 +42,36 @@ http {
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
+    # Only set "Connection: upgrade" for actual WebSocket upgrade
+    # requests; forcing it on every request (including plain HTTP/SSE)
+    # defeats upstream keepalive for the common case. Nothing in this
+    # app currently uses WebSockets (chat streaming is SSE, proxied via
+    # the buffering-disabled config below, not an upgrade) — this stays
+    # in place for forward compatibility per Phase 12's "WebSocket if
+    # required".
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    # Request-rate limiting (Phase 12's "Request limits"). This is
+    # independent of, and in front of, the app's own
+    # RateLimitMiddleware (src/core/middleware.py) — nginx sheds
+    # obviously-abusive traffic before it ever reaches a Python
+    # worker/DB connection. Zone size 10m ≈ ~160k tracked IPs.
+    limit_req_zone $binary_remote_addr zone=api_general:10m rate=20r/s;
+    limit_req_zone $binary_remote_addr zone=api_auth:10m rate=5r/m;
+    limit_req_status 429;
+
     upstream python_api {
         # Multiple backend instances can be added here for horizontal
-        # scaling of the stateless API layer.
-        server 127.0.0.1:8000;
+        # scaling of the stateless API layer. In the bare-metal/systemd
+        # deployment (see DEPLOYMENT.md) this is the local gunicorn
+        # process; under docker-compose.prod.yml it's the `backend`
+        # service name, which Docker's embedded DNS round-robins across
+        # all `deploy.replicas` — the entrypoint substitutes this from
+        # $API_UPSTREAM.
+        server __API_UPSTREAM__;
         keepalive 32;
     }
 
@@ -53,7 +87,28 @@ http {
         # Uncomment in staging/production once certificates exist:
         # return 301 https://$host$request_uri;
 
+        # Tighter limit on auth endpoints specifically — this is nginx's
+        # coarse first line of defense; the app's own per-account login
+        # lockout (src/services/auth_service.py) is the real brute-force
+        # control and survives restarts/multiple nginx instances, which
+        # this zone (in-memory, per-nginx-process) does not.
+        location /api/v1/auth/ {
+            limit_req zone=api_auth burst=5 nodelay;
+
+            proxy_pass http://python_api;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 10s;
+            proxy_send_timeout 30s;
+            proxy_read_timeout 30s;
+        }
+
         location /api/ {
+            limit_req zone=api_general burst=40 nodelay;
+
             proxy_pass http://python_api;
             proxy_http_version 1.1;
 
@@ -67,12 +122,17 @@ http {
             proxy_buffering off;
             proxy_cache off;
 
-            # WebSocket upgrade support.
+            # WebSocket upgrade support (see the `map` above — this is a
+            # no-op for ordinary requests, effective only if a future
+            # endpoint issues an Upgrade: websocket request).
             proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
+            proxy_set_header Connection $connection_upgrade;
 
             # Long-lived streaming responses need generous timeouts;
-            # tune per deployment/model latency characteristics.
+            # tune per deployment/model latency characteristics. Should
+            # be >= QWEN_*_TIMEOUT_SECONDS (backend/.env.example) plus
+            # headroom, or nginx will cut a slow-but-healthy generation
+            # off before the backend's own timeout even fires.
             proxy_connect_timeout 10s;
             proxy_send_timeout 300s;
             proxy_read_timeout 300s;
@@ -88,6 +148,14 @@ http {
         location / {
             root /var/www/frontend/dist;
             try_files $uri $uri/ /index.html;
+
+            # Hashed build assets (Vite output) are safe to cache
+            # aggressively; index.html is not (it must always be
+            # revalidated so a deploy is picked up on next load).
+            location ~* \.(?:js|css|woff2?|png|jpg|jpeg|svg|ico)$ {
+                root /var/www/frontend/dist;
+                add_header Cache-Control "public, max-age=31536000, immutable";
+            }
         }
     }
 
@@ -103,7 +171,18 @@ http {
     #     ssl_certificate_key __SSL_KEY_PATH__;
     #     ssl_protocols       TLSv1.2 TLSv1.3;
     #
+    #     location /api/v1/auth/ {
+    #         limit_req zone=api_auth burst=5 nodelay;
+    #         proxy_pass http://python_api;
+    #         proxy_http_version 1.1;
+    #         proxy_set_header Host $host;
+    #         proxy_set_header X-Real-IP $remote_addr;
+    #         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    #         proxy_set_header X-Forwarded-Proto $scheme;
+    #     }
+    #
     #     location /api/ {
+    #         limit_req zone=api_general burst=40 nodelay;
     #         proxy_pass http://python_api;
     #         proxy_http_version 1.1;
     #         proxy_set_header Host $host;
@@ -112,7 +191,7 @@ http {
     #         proxy_set_header X-Forwarded-Proto $scheme;
     #         proxy_buffering off;
     #         proxy_set_header Upgrade $http_upgrade;
-    #         proxy_set_header Connection "upgrade";
+    #         proxy_set_header Connection $connection_upgrade;
     #         proxy_connect_timeout 10s;
     #         proxy_send_timeout 300s;
     #         proxy_read_timeout 300s;

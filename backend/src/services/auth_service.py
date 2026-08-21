@@ -10,7 +10,7 @@ success/failure/denial path writes an audit log entry.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +92,10 @@ async def register_user(
     return user
 
 
+_LOGIN_LOCKOUT_THRESHOLD = 5
+_LOGIN_LOCKOUT_WINDOW_MINUTES = 15
+
+
 async def authenticate(
     session: AsyncSession,
     data: LoginRequest,
@@ -104,6 +108,33 @@ async def authenticate(
 
     Returns (user, access_token, expires_at_isoformat-ready-datetime).
     """
+    identifier = data.username_or_email
+    since = datetime.now(UTC) - timedelta(minutes=_LOGIN_LOCKOUT_WINDOW_MINUTES)
+    recent_failures = await audit_log_repository.count_recent(
+        session,
+        target_type="user",
+        target_id=identifier,
+        action="LOGIN",
+        result=AuditResult.FAILURE,
+        since=since,
+    )
+    if recent_failures >= _LOGIN_LOCKOUT_THRESHOLD:
+        await audit_log_repository.create(
+            session,
+            actor_user_id=None,
+            action="LOGIN",
+            result=AuditResult.DENIED,
+            target_type="user",
+            target_id=identifier,
+            request_id=request_id,
+            metadata={"reason": "rate_limited", "recent_failures": recent_failures},
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again later.",
+        )
+
     user = await user_repository.get_by_username_or_email(session, data.username_or_email)
 
     if user is None or not verify_password(data.password, user.password_hash):
@@ -113,7 +144,7 @@ async def authenticate(
             action="LOGIN",
             result=AuditResult.FAILURE,
             target_type="user",
-            target_id=(str(user.id) if user else data.username_or_email),
+            target_id=identifier,
             request_id=request_id,
             metadata={"reason": "invalid_credentials"},
         )

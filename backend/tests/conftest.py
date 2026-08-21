@@ -19,6 +19,13 @@ os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("LOG_JSON", "false")
+# The RateLimitMiddleware (Phase 10) is process-global and shared by
+# every test in this session via the single `app` instance — a limit
+# tuned for a real deployment would make unrelated tests flake once
+# the suite's cumulative request count crosses it within the same
+# 60s window. Raise it here rather than disable it, so rate-limiting
+# itself still gets exercised deliberately in test_phase10_security.py.
+os.environ.setdefault("RATE_LIMIT_REQUESTS_PER_MINUTE", "10000")
 
 from src.core.config import get_settings  # noqa: E402
 

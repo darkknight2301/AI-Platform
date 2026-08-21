@@ -76,13 +76,17 @@ async def edit_message(
     except CONVERSATION_EXCEPTIONS as exc:
         raise to_http_exception(exc) from exc
 
+    assistant_out = (
+        await conversation.to_message_out(assistant_message)
+        if assistant_message is not None
+        else None
+    )
+    if assistant_out is not None:
+        request.state.model_key = assistant_out.model_key
+
     return MessageExchangeResponse(
         user_message=await conversation.to_message_out(new_user_message),
-        assistant_message=(
-            await conversation.to_message_out(assistant_message)
-            if assistant_message is not None
-            else None
-        ),
+        assistant_message=assistant_out,
     )
 
 
@@ -121,7 +125,9 @@ async def regenerate_message(
     except CONVERSATION_EXCEPTIONS as exc:
         raise to_http_exception(exc) from exc
 
-    return MessageExchangeResponse(assistant_message=await conversation.to_message_out(new_message))
+    assistant_out = await conversation.to_message_out(new_message)
+    request.state.model_key = assistant_out.model_key
+    return MessageExchangeResponse(assistant_message=assistant_out)
 
 
 @router.get("/{message_id}/revisions", response_model=MessageRevisionsResponse)

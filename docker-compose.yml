@@ -1,0 +1,68 @@
+# Development environment. Hot-reload on both backend and frontend;
+# no nginx in front (Vite's own dev server + its proxy to the API
+# handle that role in dev — see frontend/vite.config.ts). See
+# DEPLOYMENT.md, "Environments", for how this differs from
+# docker-compose.staging.yml / docker-compose.prod.yml.
+#
+# Does not include Qwen: point QWEN_*_ENDPOINT_URL at an
+# already-running inference server (local or remote), or leave both
+# QWEN_*_ENABLED=false to develop everything except real model output.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: app_db
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d app_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # Overrides the image's production CMD with the dev reload server —
+    # gunicorn (the image default) is a production concern; local dev
+    # wants uvicorn's --reload instead.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      DATABASE_URL: postgresql+asyncpg://app_user:app_password@postgres:5432/app_db
+      SECRET_KEY: dev-only-not-for-production
+      CORS_ALLOW_ORIGINS: http://localhost:5173
+      LOG_JSON: "false"
+    env_file:
+      - backend/.env  # optional: copy backend/.env.example and fill in QWEN_* to use a real model
+    volumes:
+      - ./backend/src:/app/src
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    image: node:20-slim
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host"
+    volumes:
+      - ./frontend:/app
+      - frontend_dev_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_dev_data:
+  frontend_dev_node_modules:

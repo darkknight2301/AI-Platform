@@ -44,9 +44,18 @@ model-independence design and `docs/adr/` for key decisions.
 ├── nginx/
 │   └── nginx.conf.template
 ├── docs/
-│   └── adr/              Architecture Decision Records
+│   ├── adr/              Architecture Decision Records
+│   ├── architecture/     Final review, future-model architecture check
+│   ├── api/               Implemented API surface
+│   ├── user-guide/
+│   ├── manager-guide/
+│   ├── developer-guide/
+│   ├── owner-guide/
+│   └── troubleshooting/
 ├── ARCHITECTURE.md
 ├── SECURITY.md
+├── PERFORMANCE.md
+├── DEPLOYMENT.md
 └── README.md
 ```
 
@@ -214,29 +223,34 @@ file with real values.
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — component responsibilities, data flow, model-independence design.
 - [`SECURITY.md`](./SECURITY.md) — security boundaries and practices.
+- [`PERFORMANCE.md`](./PERFORMANCE.md) — load testing and identified bottlenecks.
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — production deployment procedure.
+- [`docs/architecture/final-review.md`](./docs/architecture/final-review.md) — Phase 13 final review: verified vs. untested claims, future-model architecture check, technical debt.
+- [`docs/api/`](./docs/api/) — the actual implemented API surface.
+- [`docs/user-guide/`](./docs/user-guide/), [`docs/manager-guide/`](./docs/manager-guide/), [`docs/developer-guide/`](./docs/developer-guide/), [`docs/owner-guide/`](./docs/owner-guide/) — role-specific how-to guides.
+- [`docs/troubleshooting/`](./docs/troubleshooting/) — common issues and how to diagnose them.
 - [`docs/adr/`](./docs/adr/) — architecture decision records.
 
 ## Project Status
 
-**Phase 1 — Foundation and Architecture: complete.**
-**Phase 2 — Database and Data Model: complete.**
-**Phase 3 — Authentication and RBAC: complete.**
-**Phase 4 — Model Abstraction and Registry: complete.**
-**Phase 5 — Qwen Model Integration: complete.**
-**Phase 6 — Chat Backend: complete.**
-**Phase 7 — Token Quotas and Chat Limits: complete.**
-**Phase 8 — AI Chat Frontend: complete.**
+**All 13 phases complete** — foundation, data model, auth/RBAC, model
+abstraction, Qwen integration, chat backend (streaming/revisions),
+quotas/limits, chat frontend, role-specific admin dashboards
+(Manager/Developer/Owner), observability/audit/security hardening,
+testing (backend + Playwright E2E) and performance work, nginx +
+production deployment tooling, and this documentation set.
 
-Implemented: the full backend (Phases 1-7 — foundation, data model,
-auth/RBAC, model abstraction, Qwen integration, chat backend with
-streaming/revisions, quotas/limits) and — as of Phase 8 — a complete
-React chat frontend: login/registration with pending-approval
-messaging, new chat, chat history with search/rename/archive/delete,
-model selector, streaming responses, markdown and code blocks with
-copy, edit prompt, regenerate, undo/redo, a live token-usage bar with
-renewal countdown, chat-limit awareness, and error/loading states
-throughout. See `ARCHITECTURE.md`'s "Chat Frontend" section and
-ADR 0011.
+**Read this before trusting "complete" as "verified":**
+[`docs/architecture/final-review.md`](./docs/architecture/final-review.md)
+states plainly that no test in this repository — backend, frontend, or
+integration — has ever actually been executed, because every
+environment used to build this had no network access and no running
+database/browser. Every phase's tests were written and reviewed, not
+run. That document is the accurate status; treat this section as an
+index, not a guarantee.
 
-Not yet implemented (by design — later phases): background workers,
-general API rate limiting enforcement, password reset flow.
+Known limitations (see the final review for the full list): no
+background-worker process, no password-reset flow, no embeddings
+support, and a handful of named, accepted trade-offs (process-local
+rate limiting, a minor 403-vs-404 existence leak on chat ownership
+checks).

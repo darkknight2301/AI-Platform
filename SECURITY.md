@@ -139,10 +139,73 @@ As of Phase 8:
   point 7) — the same safe-error-handling guarantee established in
   Phase 5 now reaches all the way to the HTTP client.
 
+## Phase 10 — Observability, Audit, Security
+
+- **Structured logging**: `RequestLoggingMiddleware`
+  (`src/core/middleware.py`) emits one JSON log line per request —
+  timestamp, request_id, user_id, endpoint, model (when applicable),
+  duration_ms, status, error_type. It never logs request/response
+  bodies, so prompts and replies are excluded by construction, not by
+  a filter that could be bypassed. `error_type` for handled
+  `HTTPException`s is captured via a dedicated exception handler in
+  `main.py`; unhandled exceptions are caught, logged, and re-raised so
+  Starlette's own 500 handling is unchanged.
+- **Rate limiting / brute-force protection**: `RateLimitMiddleware`
+  enforces `RATE_LIMIT_REQUESTS_PER_MINUTE` per client IP, in-memory
+  (process-local — the same documented limitation as
+  `PerformanceMetrics`; a multi-instance deployment needs a shared
+  store). Separately, `auth_service.authenticate` locks out an
+  identifier (username/email) for 15 minutes after 5 recent `LOGIN`
+  `FAILURE` audit entries — this check is driven by the audit log
+  itself, not a separate in-memory counter, so it survives process
+  restarts and is consistent across instances.
+- **CSRF**: not implemented, deliberately. The API is Bearer-token
+  authenticated (`Authorization` header from `localStorage`), never
+  cookie-based — see "Current Scope" above. CSRF relies on the
+  browser automatically attaching credentials (cookies) to
+  cross-origin requests; there's nothing here for a forged
+  cross-origin form submission to attach. Revisit if a cookie-based
+  session is ever introduced.
+- **Security headers**: `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy` are set both at the nginx layer
+  (`nginx/nginx.conf.template`) and, for defense-in-depth, directly by
+  the FastAPI app (`main.py`) — the API is reachable directly in dev
+  and tests where nginx isn't in front of it.
+- **Audit coverage extended**: `DELETE_CHAT` and `PROMPT_EDIT` are now
+  audit-logged (`src/services/conversation_service.py`), alongside the
+  registration/login/logout/approval/role/model/quota events already
+  covered since earlier phases. Chat/message *content* is still never
+  written to the audit log — only that the action occurred, by whom,
+  and against which chat/message id.
+- **IDOR / RBAC bypass / group isolation**: exercised directly by
+  `backend/tests/integration/test_admin_dashboards.py` (Phase 9) and
+  `test_phase10_security.py` (Phase 10) — a User can't reach another
+  user's chats, a Manager can't reach another group, a Developer can't
+  reach `/admin/*`, and a plain user gets 403 on every elevated
+  endpoint tested.
+- **Input validation / SQL injection**: every DB access goes through
+  SQLAlchemy's async ORM/Core with bound parameters — no endpoint
+  builds a query by string-formatting user input (verified by
+  inspection: the only raw `text()` calls in the codebase are a static
+  `SELECT 1` health check and a parameterized advisory-lock call).
+  Every request body is a Pydantic schema with explicit
+  length/pattern constraints (see `schemas/auth.py`,
+  `schemas/message.py`).
+- **XSS**: chat content is rendered via `react-markdown`
+  (`frontend/src/components/Markdown.tsx`), which treats message
+  content as data and does not execute raw HTML by default; no
+  `dangerouslySetInnerHTML`/`innerHTML` usage exists anywhere in the
+  frontend (verified by inspection).
+- **Sensitive data exposure**: `GET /api/v1/admin/config` continues to
+  expose only the fields declared on `GlobalConfigOut` — `secret_key`
+  and `database_url` are structurally absent from that schema, not
+  filtered out of a larger object. Covered by
+  `test_config_endpoint_never_exposes_secret_key`.
+
 ## Planned (Later Phases)
 
-- Rate limiting, enforced server-side (`RATE_LIMIT_REQUESTS_PER_MINUTE`
-  is defined in configuration now but not yet enforced).
+- A shared (non-process-local) store for rate limiting once this runs
+  as more than one instance.
 - Request queuing/backpressure at the model layer so the model
   infrastructure's concurrency limits are never exceeded regardless of
   web-tier load.

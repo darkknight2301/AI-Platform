@@ -53,7 +53,8 @@ class ChatService:
         provider = await self._resolve_provider(request.model_key)
 
         try:
-            return await provider.generate(request)
+            async with self._router.acquire_slot(request.model_key):
+                return await provider.generate(request)
         except ModelProviderError as exc:
             logger.error(
                 "chat_service_generate_failed",
@@ -87,8 +88,9 @@ class ChatService:
         provider = await self._resolve_provider(request.model_key)
 
         try:
-            async for chunk in provider.stream(request):
-                yield chunk
+            async with self._router.acquire_slot(request.model_key):
+                async for chunk in provider.stream(request):
+                    yield chunk
         except ModelProviderError as exc:
             logger.error(
                 "chat_service_stream_failed",

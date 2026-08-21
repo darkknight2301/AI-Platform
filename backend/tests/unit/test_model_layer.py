@@ -5,6 +5,8 @@ pure in-process object composition.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from src.model_layer.provider_interface import ModelProvider
@@ -223,3 +225,106 @@ async def test_mock_provider_health_check_true():
 def test_mock_provider_satisfies_provider_interface():
     provider = MockProvider(category=ModelCategory.CODER)
     assert isinstance(provider, ModelProvider)
+
+
+# --- Phase 11: per-model concurrency (queueing) --------------------------
+
+@pytest.mark.asyncio
+async def test_acquire_slot_bounds_concurrency(monkeypatch):
+    """With a limit of 1, a second acquire for the same model_key must
+    block until the first is released — proving requests queue at the
+    router seam rather than all running unbounded."""
+    from src.core.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("MODEL_MAX_CONCURRENT_REQUESTS_PER_MODEL", "1")
+    try:
+        registry = ModelRegistry()
+        registry.register(
+            model_key="mock-coder-1",
+            provider=MockProvider(category=ModelCategory.CODER),
+            category=ModelCategory.CODER,
+        )
+        router = ModelRouter(registry)
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def _hold_slot(duration: float):
+            nonlocal in_flight, max_in_flight
+            async with router.acquire_slot("mock-coder-1"):
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+                await asyncio.sleep(duration)
+                in_flight -= 1
+
+        await asyncio.gather(_hold_slot(0.05), _hold_slot(0.05))
+        assert max_in_flight == 1
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_acquire_slot_allows_configured_concurrency(monkeypatch):
+    from src.core.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("MODEL_MAX_CONCURRENT_REQUESTS_PER_MODEL", "2")
+    try:
+        registry = ModelRegistry()
+        registry.register(
+            model_key="mock-coder-1",
+            provider=MockProvider(category=ModelCategory.CODER),
+            category=ModelCategory.CODER,
+        )
+        router = ModelRouter(registry)
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def _hold_slot(duration: float):
+            nonlocal in_flight, max_in_flight
+            async with router.acquire_slot("mock-coder-1"):
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+                await asyncio.sleep(duration)
+                in_flight -= 1
+
+        await asyncio.gather(_hold_slot(0.05), _hold_slot(0.05))
+        assert max_in_flight == 2
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_different_model_keys_have_independent_slots(monkeypatch):
+    from src.core.config import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("MODEL_MAX_CONCURRENT_REQUESTS_PER_MODEL", "1")
+    try:
+        registry = ModelRegistry()
+        registry.register(
+            model_key="mock-coder-1",
+            provider=MockProvider(category=ModelCategory.CODER),
+            category=ModelCategory.CODER,
+        )
+        registry.register(
+            model_key="mock-nlp-1",
+            provider=MockProvider(category=ModelCategory.NLP),
+            category=ModelCategory.NLP,
+        )
+        router = ModelRouter(registry)
+
+        async def _hold(model_key: str, duration: float):
+            async with router.acquire_slot(model_key):
+                await asyncio.sleep(duration)
+
+        # Should complete quickly since the two model_keys don't share a
+        # slot — if they incorrectly did, this would take ~2x as long.
+        start = asyncio.get_event_loop().time()
+        await asyncio.gather(_hold("mock-coder-1", 0.05), _hold("mock-nlp-1", 0.05))
+        elapsed = asyncio.get_event_loop().time() - start
+        assert elapsed < 0.09
+    finally:
+        get_settings.cache_clear()

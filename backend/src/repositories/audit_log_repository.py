@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.audit_log import AuditLog
@@ -36,7 +37,23 @@ async def create(
     return entry
 
 
-async def list_all(session: AsyncSession, *, limit: int = 100, offset: int = 0) -> list[AuditLog]:
+async def count_recent(
+    session: AsyncSession,
+    *,
+    target_type: str,
+    target_id: str,
+    action: str,
+    result: AuditResult,
+    since: datetime,
+) -> int:
+    stmt = select(func.count()).select_from(AuditLog).where(
+        AuditLog.target_type == target_type,
+        AuditLog.target_id == target_id,
+        AuditLog.action == action,
+        AuditLog.result == result,
+        AuditLog.timestamp >= since,
+    )
+    return (await session.scalar(stmt)) or 0
     stmt = select(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit).offset(offset)
     return list((await session.scalars(stmt)).all())
 

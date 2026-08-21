@@ -45,8 +45,12 @@ export function MessageBubble({
         <Markdown content={message.content} />
       </div>
       <div className="message-meta-row">
-        {!isUser && message.response_time_ms != null && <span>{(message.response_time_ms / 1000).toFixed(1)}s</span>}
-        {!isUser && <span>{message.total_tokens.toLocaleString()} tokens</span>}
+        {!isUser && message.model_key && <span>Model: {message.model_key}</span>}
+        {!isUser && message.response_time_ms != null && (
+          <span>Response time: {(message.response_time_ms / 1000).toFixed(2)}s</span>
+        )}
+        {!isUser && <span>Input tokens: {message.input_tokens.toLocaleString()}</span>}
+        {!isUser && <span>Output tokens: {message.output_tokens.toLocaleString()}</span>}
         <div className="message-actions">
           <CopyMessageButton text={message.content} />
           {isUser && onEdit && (

@@ -123,11 +123,13 @@ async def update_chat(
 @router.delete("/{chat_id}", status_code=204)
 async def delete_chat(
     chat_id: uuid.UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     conversation: ConversationService = Depends(get_conversation_service),
 ):
+    request_id = getattr(request.state, "request_id", None)
     try:
-        await conversation.delete_chat(user=current_user, chat_id=chat_id)
+        await conversation.delete_chat(user=current_user, chat_id=chat_id, request_id=request_id)
     except CONVERSATION_EXCEPTIONS as exc:
         raise to_http_exception(exc) from exc
 
@@ -187,7 +189,10 @@ async def send_message(
     except CONVERSATION_EXCEPTIONS as exc:
         raise to_http_exception(exc) from exc
 
+    assistant_out = await conversation.to_message_out(assistant_message)
+    request.state.model_key = assistant_out.model_key
+
     return MessageExchangeResponse(
         user_message=await conversation.to_message_out(user_message),
-        assistant_message=await conversation.to_message_out(assistant_message),
+        assistant_message=assistant_out,
     )
