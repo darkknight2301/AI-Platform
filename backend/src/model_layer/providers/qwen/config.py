@@ -7,6 +7,15 @@ Defaults (where present) are generic conventions (e.g. "loopback +
 common port"), never an absolute filesystem path tied to a particular
 machine/user.
 
+This is also the single source of configuration truth for local model
+execution (`docs/model-serving.md`): the same `QWEN_*_MODEL_PATH` /
+`QWEN_*_DEVICE` / `QWEN_*_DTYPE` / `QWEN_*_GPU_MEMORY_FRACTION` /
+`QWEN_*_CONTEXT_LENGTH` env vars this module reads for the HTTP
+client's own use are read again by
+`backend/scripts/run_local_model_server.sh` to start the actual vLLM
+server process — deliberately, so there is never a second, divergent
+place to configure "the same model."
+
 Kept entirely inside `providers/qwen/` (not `src/core/config.py`) so
 Qwen-specific configuration concerns never leak into the application's
 central settings module — see ADR 0008.
@@ -31,9 +40,15 @@ class QwenProviderConfig(BaseModel):
 
     # Model identity / weights location. This provider talks to an
     # already-running inference server (see `provider.py`) rather than
-    # loading weights in-process, so `model_path` is forwarded as the
-    # `model` field of each request (and kept for descriptive/admin
-    # purposes) — it is NOT used to read files from disk here.
+    # loading weights in-process itself, so `model_path` is forwarded
+    # as the `model` field of each request (and kept for
+    # descriptive/admin purposes) — it is NOT used to read files from
+    # disk here. As of local execution (`docs/model-serving.md`),
+    # `model_path` IS the path/identifier
+    # `backend/scripts/run_local_model_server.sh` passes to `vllm
+    # serve` to load the actual weights — so it now does double duty:
+    # descriptive metadata here, and the real weights location for the
+    # separate process that reads this same env var.
     model_path: str | None = None
 
     endpoint_url: str
@@ -46,11 +61,16 @@ class QwenProviderConfig(BaseModel):
     streaming_enabled: bool = True
     request_timeout_seconds: float = 60.0
 
-    # Hardware/runtime configuration — informational for this
-    # HTTP-client provider (the values that matter live on the
-    # inference server itself), but externalized here so the same
-    # environment variables can be forwarded to that server's own
-    # deployment configuration without a second source of truth.
+    # Hardware/runtime configuration. Historically informational for
+    # this HTTP-client provider (the values that mattered lived on
+    # whatever inference server was configured). As of local execution
+    # (`docs/model-serving.md`), these ARE load-bearing: the same env
+    # vars are read by `backend/scripts/run_local_model_server.sh` and
+    # translated into `vllm serve` flags (`--device`, `--dtype`,
+    # `--gpu-memory-utilization`), so this class remains the single
+    # source of truth for both this HTTP client's descriptive metadata
+    # and the local server process's actual startup configuration —
+    # never a second, divergent config file.
     device: str | None = None
     dtype: str | None = None
     gpu_memory_fraction: float | None = None

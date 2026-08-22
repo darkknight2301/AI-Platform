@@ -1,6 +1,21 @@
 """
-`QwenProvider`: talks to an already-running, OpenAI-compatible
-inference server (e.g. vLLM, TGI, or similar) hosting a Qwen model.
+`QwenProvider`: an OpenAI-compatible HTTP client for a Qwen model
+server. Used directly by neither model — see `local_providers.py`'s
+`QwenCoderProvider`/`QwenNLPProvider`, which subclass this with each
+model's fixed identity. Kept here, unsubclassed-by-default, because
+this class's logic (request building, SSE parsing, error mapping) has
+nothing model-specific in it.
+
+As of local execution (see `docs/model-serving.md`), `config.endpoint_url`
+points at a vLLM server this repository's own tooling starts on the
+same backend machine (`backend/scripts/run_local_model_server.sh`),
+loading locally pre-downloaded weights — not a third-party or
+necessarily-external service. Nothing in this file changes based on
+that: it was already an HTTP client speaking the OpenAI chat-completions
+API, which is exactly what vLLM's own server speaks, so this class
+needed zero changes to move from "assumed external server" to "local
+vLLM process" — only where `endpoint_url` points changed, which is
+already environment/config-driven and not this file's concern.
 
 This file — plus `config.py` in this package — is the ONLY place in
 the codebase that knows anything Qwen-specific: request/response

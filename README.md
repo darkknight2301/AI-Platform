@@ -76,16 +76,13 @@ external dependency this repository does not build or run:
   process.
 - **PostgreSQL** — the application's only database. Managed entirely
   through Alembic migrations (`backend/alembic/`).
-- **Qwen model server(s)** (external, not part of this repository) —
-  the backend talks to one or two already-running, OpenAI-compatible
-  inference servers (e.g. vLLM, TGI) over plain HTTP. Provisioning
-  those servers — GPUs, model weights, the inference runtime itself —
-  is explicitly out of scope for this repository (confirmed in
-  `DEPLOYMENT.md`, "What this does not cover") and therefore out of
-  scope for this README too. If you don't have one, the application
+- **Qwen model server(s)** — one dedicated vLLM process per model,
+  run locally on this backend host using pre-downloaded weights (no
+  Ollama, no third-party API). Full setup in §10 and
+  `docs/model-serving.md`. If not yet configured, the application
   still starts and runs fully — chat just has no model to route to
-  until `QWEN_CODER_ENABLED`/`QWEN_NLP_ENABLED` point at a real
-  endpoint.
+  until `QWEN_CODER_ENABLED`/`QWEN_NLP_ENABLED` point at a running
+  local server.
 - **Redis** — optional. Only needed if you run more than one backend
   worker process (see §9); the application does not use Redis for
   anything else.
@@ -142,7 +139,7 @@ depends on an Ubuntu-specific feature.
 | Redis | 7.x (only if running >1 backend worker process — see §9) | `docker-compose.prod.yml`'s `redis:7-alpine` |
 | Git | any recent version | — |
 | CPU / RAM | not specified by the repository | `<VALUE_TO_CONFIGURE>` — size for your expected load; see `PERFORMANCE.md` for the worker/DB-pool sizing math once you have a `WEB_CONCURRENCY` figure in mind |
-| GPU / CUDA | **not required by anything in this repository.** The Qwen model servers that need a GPU are external and out of scope (see §1, §10) | `backend/src/model_layer/providers/qwen/provider.py`, `DEPLOYMENT.md` |
+| GPU / CUDA | Required if running the local Qwen model server(s) (§10) — not required for the backend/frontend/Nginx/Postgres themselves | `docs/model-serving.md` |
 
 Required ports (bind/expose only what you actually need reachable —
 see §25):
@@ -453,56 +450,56 @@ Redis should be bound to `localhost` only (Ubuntu's default
 
 ## 10. Model Deployment (Qwen)
 
-This section documents the application's **client** of two model
-servers, not the servers themselves — provisioning them is explicitly
-out of scope for this repository (`DEPLOYMENT.md`, "What this does not
-cover"), and therefore out of scope for this README.
+Both models run **locally** on this machine, as their own vLLM
+OpenAI-compatible server processes using pre-downloaded weights — no
+Ollama, no third-party model API. Full setup (dependency isolation,
+config mapping, systemd units, GPU memory sizing) is in
+[`docs/model-serving.md`](./docs/model-serving.md); summary:
 
 ```text
-Backend (QwenProvider, an HTTP client only)
+Backend (QwenProvider, an HTTP client — unchanged either way)
         ↓  OpenAI-compatible chat-completions API, over HTTP
-Qwen Coder / Qwen NLP inference server(s)
-        ↓  (external to this repository)
-Your own already-running vLLM / TGI / or similar deployment
+vLLM server process (1 per model, this host, not per Gunicorn worker)
+        ↓  loads weights once
+Pre-downloaded local weights (QWEN_*_MODEL_PATH — already on disk;
+                                nothing here downloads them)
 ```
 
-- **Runtime:** the repository does not implement or bundle an
-  inference runtime. `backend/src/model_layer/providers/qwen/provider.py`
-  states explicitly that it "talks to an already-running,
-  OpenAI-compatible inference server (e.g. vLLM, TGI, or similar)".
-  Which runtime you actually run is your choice — the application only
-  needs an OpenAI-compatible `/v1/chat/completions`-style endpoint at
-  the configured URL.
-- **Model files / weights:** not read from disk by this application.
-  `QWEN_*_MODEL_PATH` (default `Qwen/Qwen2.5-Coder-7B-Instruct` /
-  `Qwen/Qwen2.5-7B-Instruct`) is forwarded as the `model` field of each
-  request and used for display purposes only — it is your inference
-  server's responsibility to have those weights available, however it
-  expects them provisioned (local disk, HuggingFace cache, etc.).
-- **GPU / CUDA:** required by the inference server, not by this
-  repository. `QWEN_*_DEVICE`/`QWEN_*_DTYPE`/`QWEN_*_GPU_MEMORY_FRACTION`
-  are informational values forwarded for descriptive/admin purposes —
-  the values that actually matter live in your inference server's own
-  deployment configuration, not here.
-- **Port / configuration:** each model is independently enabled and
-  configured via `{prefix}*` environment variables in `backend/.env`
-  (`QWEN_CODER_*` / `QWEN_NLP_*` — full list in §6 and
-  `backend/.env.example`). Both default to **disabled**
-  (`QWEN_*_ENABLED=false`) — the application starts and the rest of the
-  chat platform works fully without either; chat requests routed to a
-  disabled/unconfigured model simply get a normal "model not found"
-  error rather than the app failing to start.
-- **Health check:** the application does not perform its own
-  liveness check against the Qwen endpoint(s) — a bad/unreachable
-  endpoint surfaces as an error on the specific chat request that
-  tries to use it, not as a global outage. Verify your inference
-  server independently (however that runtime exposes its own health
-  endpoint — out of scope here).
+- **Runtime:** vLLM, one dedicated process per model — not one per
+  Gunicorn backend worker (a 7B model is ~14GB in bf16; loading it
+  inside each of `WEB_CONCURRENCY` worker processes would multiply
+  that by worker count). `backend/scripts/run_local_model_server.sh`
+  starts it, reading the same `QWEN_*` variables in §6/`.env.example`.
+- **Install:** vLLM lives in its **own** virtualenv, separate from
+  `backend/venv` — never added to `backend/requirements.txt` (it pulls
+  in a multi-GB, CUDA-specific PyTorch build the API server itself
+  doesn't need). See `docs/model-serving.md`, "Dependency isolation."
+- **Model files / weights:** `QWEN_*_MODEL_PATH` is both the `model`
+  field `QwenProvider` sends and the actual weights location
+  `run_local_model_server.sh` passes to `vllm serve` — one variable,
+  not two. Weights must already be downloaded there; nothing in this
+  repository downloads them.
+- **GPU / CUDA:** required, on this host now (not an external
+  system's concern). `QWEN_*_DEVICE`/`QWEN_*_DTYPE`/
+  `QWEN_*_GPU_MEMORY_FRACTION` are load-bearing — translated directly
+  into `vllm serve` flags. See `docs/model-serving.md`, "GPU memory,"
+  for budgeting both models on one GPU.
+- **Port / configuration:** unchanged from before — each model
+  independently enabled via `QWEN_{CODER,NLP}_ENABLED` (default
+  **disabled**); the application starts and the rest of the chat
+  platform works fully without either.
+- **Health check:** unchanged — `QwenProvider`'s existing error
+  handling (connection failure, timeout, malformed response) covers
+  "server unreachable" the same way regardless of what runs on the
+  other end; see §20 Troubleshooting → "Model unavailable."
+- **systemd:** `ai-platform-model-coder.service` /
+  `ai-platform-model-nlp.service` — unit files in
+  `docs/model-serving.md`, started before the backend (§17).
 
-If you don't yet have an inference server, leave both
-`QWEN_*_ENABLED=false` — every other part of this deployment guide
-still applies and the application is fully usable, just without real
-model output.
+If you don't yet have weights downloaded or a GPU provisioned, leave
+both `QWEN_*_ENABLED=false` — every other part of this deployment
+guide still applies and the application is fully usable, just without
+real model output.
 
 ---
 
@@ -762,11 +759,10 @@ sudo systemctl stop ai-platform-backend
 journalctl -u ai-platform-backend -f      # follow logs — see §19
 ```
 
-No `ai-platform-worker.service` — see §12. No
-`ai-platform-model-*.service` — the Qwen model servers are external to
-this deployment (§10); if you also host one on this machine, give it
-its own unit file following its own runtime's documented startup
-command, which is out of scope here.
+No `ai-platform-worker.service` — see §12.
+`ai-platform-model-coder.service` / `ai-platform-model-nlp.service`
+run the local vLLM servers (§10) — unit files in
+`docs/model-serving.md`, not repeated here.
 
 Nginx and PostgreSQL use their own distro-provided systemd units
 (`nginx.service`, `postgresql.service`) — already enabled in §7/§14,
@@ -781,8 +777,9 @@ no custom unit needed.
       ↓
 2. Redis (if used)      (systemctl start redis-server — §9)
       ↓
-3. Qwen model server(s) (external — start before enabling QWEN_*_ENABLED,
-                         if you're self-hosting one; otherwise n/a)
+3. Qwen model server(s) (systemctl start ai-platform-model-coder
+                         ai-platform-model-nlp — §10; skip if
+                         QWEN_*_ENABLED=false)
       ↓
 4. Database migration   (alembic upgrade head — one-time/per-deploy, §8)
       ↓
@@ -894,8 +891,9 @@ sudo journalctl -u postgresql -f
 sudo tail -f /var/log/postgresql/postgresql-*-main.log
 ```
 
-**Qwen model server(s)** — external to this deployment; consult
-whatever runtime you're actually running (§10) for its own logging.
+**Qwen model server(s)** — `journalctl -u ai-platform-model-coder -f`
+/ `ai-platform-model-nlp` (same journald mechanism as the backend,
+§10).
 
 ---
 
@@ -1022,10 +1020,10 @@ starting the corresponding service.
 9. Run the health checks in §18.
 ```
 
-Whether the Qwen model server(s) need restarting depends entirely on
-whether the update changed anything about how the backend calls them
-(env vars, request shape) — the model server itself is external and
-this repository's releases don't touch it (§10).
+Restart the model services only if the update changed `QWEN_*` env
+vars or `run_local_model_server.sh` itself:
+`sudo systemctl restart ai-platform-model-coder ai-platform-model-nlp`
+(§10). A backend-only code change does not require this.
 
 ---
 
@@ -1105,7 +1103,7 @@ organization's requirements — not specified by the repository.
 [ ] TRUST_PROXY_HEADERS=true ONLY if the above is true (§6, §11)
 [ ] PostgreSQL not publicly exposed (§7)
 [ ] Redis not publicly exposed, if used (§9)
-[ ] Qwen model server ports not publicly exposed (external to this host's firewall rules if co-located)
+[ ] Qwen model server ports (8001/8002 default) bound to localhost / firewalled, not publicly exposed (§10)
 [ ] HTTPS enabled, certificate auto-renewal verified (§15)
 [ ] Nginx security headers present (shipped by default — §14)
 [ ] DEBUG=false in production (§6)
