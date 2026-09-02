@@ -10,7 +10,12 @@ from src.models.enums import ChatStatus
 
 
 class ChatCreateRequest(BaseModel):
-    model_key: str = Field(min_length=1, max_length=150)
+    # Exactly one of the two must be given (validated in
+    # ConversationService.create_chat) — model_key for the existing
+    # Qwen-only flow (unchanged), agent_key to create an agent-backed
+    # chat (e.g. "ila-agent"). See ADR 0012.
+    model_key: str | None = Field(default=None, min_length=1, max_length=150)
+    agent_key: str | None = Field(default=None, min_length=1, max_length=150)
     title: str | None = Field(default=None, max_length=500)
 
 

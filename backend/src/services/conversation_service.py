@@ -22,6 +22,7 @@ ADR 0009.
 """
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -30,6 +31,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.agent_layer.errors import AgentError
+from src.agent_layer.registry import AgentNotFoundError, AgentRegistry
+from src.agent_layer.schemas import AgentRequest
 from src.db.session import AsyncSessionLocal
 from src.model_layer.schemas import ModelMessage, ModelRequest, ModelResponse
 from src.models.ai_model import AIModel
@@ -57,13 +61,24 @@ from src.services.conversation_errors import (
 )
 from src.services.errors import ChatServiceError
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_TITLE = "New chat"
 
 
 class ConversationService:
-    def __init__(self, session: AsyncSession, chat_service: ChatService) -> None:
+    def __init__(
+        self, session: AsyncSession, chat_service: ChatService, agent_registry: AgentRegistry | None = None
+    ) -> None:
         self._session = session
         self._chat_service = chat_service
+        # Optional (defaults to None) so nothing outside
+        # api/deps.py needs to change just because this parameter
+        # exists — a ConversationService built without one simply
+        # can't serve agent-mode chats (AgentNotConfiguredError),
+        # which is correct for e.g. a narrowly-scoped test that only
+        # cares about the Qwen path. See ADR 0012.
+        self._agent_registry = agent_registry
 
     # --- ownership -----------------------------------------------------------
 
@@ -90,13 +105,26 @@ class ConversationService:
 
     # --- chat CRUD -------------------------------------------------------------
 
-    async def create_chat(self, *, user: User, model_key: str, title: str | None) -> Chat:
-        model = await self._get_model_by_key(model_key)
+    async def create_chat(
+        self, *, user: User, model_key: str | None, title: str | None, agent_key: str | None = None
+    ) -> Chat:
+        """Create a chat backed by either a model (`model_key`) or an
+        agent (`agent_key`) — exactly one must be given. An agent-mode
+        chat still gets a real `model_id` (that agent's placeholder
+        `AIModel` row, e.g. "ila-agent" — seeded by migration, never
+        registered in `ModelRouter`/`ModelRegistry`) purely so
+        `Chat.model_id`'s existing NOT NULL/FK contract never has to
+        change. See ADR 0012.
+        """
+        if (model_key is None) == (agent_key is None):
+            raise ValueError("Exactly one of model_key or agent_key must be given.")
+        model = await self._get_model_by_key(agent_key if agent_key is not None else model_key)
         # Concurrency-safe check: see quota_service.enforce_chat_limit.
         await quota_service.enforce_chat_limit(self._session, user)
         chat = Chat(
             user_id=user.id,
             model_id=model.id,
+            agent_key=agent_key,
             title=title or _DEFAULT_TITLE,
             status=ChatStatus.ACTIVE,
         )
@@ -263,6 +291,53 @@ class ConversationService:
         )
         return message
 
+    async def _call_agent(
+        self, *, user: User, chat: Chat, agent_key: str, query: str, context: list[Message]
+    ) -> tuple[ModelResponse, int]:
+        """Agent-mode equivalent of `_reserve_call_release` — same
+        quota-reservation wrapping (agents can consume real model
+        tokens internally via the shared `ModelRouter`, so the same
+        quota accounting applies), but resolves through
+        `AgentRegistry` instead of `ModelRouter`, and wraps the
+        `AgentResult` into a `ModelResponse` so `_persist_assistant_message`
+        needs no changes at all — one more concrete instance of
+        reusing existing infrastructure rather than duplicating it.
+        See ADR 0012.
+        """
+        if self._agent_registry is None:
+            raise ChatServiceError("Agents are not configured for this deployment.")
+        try:
+            registration = self._agent_registry.get(agent_key)
+        except AgentNotFoundError as exc:
+            logger.warning("conversation_service_agent_not_found", extra={"agent_key": agent_key})
+            raise ChatServiceError("The requested agent is not available.") from exc
+
+        agent_request = AgentRequest(
+            agent_key=agent_key, query=query, history=self._to_model_messages(context)
+        )
+        reservation = await quota_service.reserve_tokens(self._session, user)
+        start = time.monotonic()
+        try:
+            result = await registration.adapter.run(agent_request)
+        except AgentError as exc:
+            await quota_service.release_reservation(self._session, reservation.id)
+            logger.error(
+                "conversation_service_agent_run_failed",
+                extra={"agent_key": agent_key, "error_type": type(exc).__name__},
+                exc_info=exc,
+            )
+            raise ChatServiceError(exc.safe_message) from exc
+        await quota_service.release_reservation(self._session, reservation.id)
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+
+        response = ModelResponse(
+            model_key=agent_key,
+            content=result.output,
+            usage=result.usage,
+            finish_reason="stop" if result.finish_reason == "stop" else "error",
+        )
+        return response, elapsed_ms
+
     # --- send a new prompt ---------------------------------------------------
 
     async def send_message(
@@ -279,15 +354,20 @@ class ConversationService:
         await self._session.flush()
 
         context = await message_repository.list_active_thread(self._session, chat.id, limit=1000)
-        model_request = ModelRequest(
-            model_key=model.model_key, messages=self._to_model_messages(context)
-        )
 
         # Quota check happens after the prompt is flushed (so it's part
         # of the same slot/sequence-number allocation) but before the
-        # model is called — see quota_service.reserve_tokens.
+        # model/agent is called — see quota_service.reserve_tokens.
         try:
-            response, elapsed_ms = await self._reserve_call_release(user, model_request)
+            if chat.agent_key is not None:
+                response, elapsed_ms = await self._call_agent(
+                    user=user, chat=chat, agent_key=chat.agent_key, query=content, context=context
+                )
+            else:
+                model_request = ModelRequest(
+                    model_key=model.model_key, messages=self._to_model_messages(context)
+                )
+                response, elapsed_ms = await self._reserve_call_release(user, model_request)
         except ChatServiceError:
             # Keep the user's prompt even though generation failed.
             await self._session.commit()

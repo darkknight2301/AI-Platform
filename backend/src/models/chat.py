@@ -33,6 +33,15 @@ class Chat(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("models.id", ondelete="RESTRICT"), nullable=False, index=True
     )
 
+    # NULL for an ordinary model-backed chat (today's only case).
+    # Set to an agent's registered key (e.g. "ila-agent") when this
+    # chat is handled by src/agent_layer/ instead of the model layer.
+    # `model_id` is still always populated even then — it points at
+    # that agent's placeholder `AIModel` row (see ModelCategory.AGENT,
+    # agent_layer/bootstrap.py) purely so this column's FK/NOT NULL
+    # contract never has to change. See ADR 0012.
+    agent_key: Mapped[str | None] = mapped_column(String(150), nullable=True, index=True)
+
     title: Mapped[str] = mapped_column(String(500), nullable=False, default="New chat")
     status: Mapped[ChatStatus] = enum_column(
         ChatStatus, name="chat_status", nullable=False, default=ChatStatus.ACTIVE

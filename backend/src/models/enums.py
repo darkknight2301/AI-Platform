@@ -65,6 +65,12 @@ class MessageRole(str, enum.Enum):
 class ModelCategory(str, enum.Enum):
     CODER = "CODER"
     NLP = "NLP"
+    # Not a model — see src/agent_layer/. Used only so a chat backed by
+    # an agent (e.g. ILA) can still satisfy Chat.model_id's FK via one
+    # placeholder `AIModel` row (agent_layer/bootstrap.py), the same
+    # way any other category does. Never registered in ModelRegistry;
+    # ModelRouter/ModelProvider never see this value. See ADR 0012.
+    AGENT = "AGENT"
 
 
 class AuditResult(str, enum.Enum):

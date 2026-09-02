@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.agent_layer.registry import AgentRegistry
 from src.db.session import AsyncSessionLocal, get_db
 from src.model_layer.registry import ModelRegistry
 from src.model_layer.router import ModelRouter
@@ -22,6 +23,10 @@ def get_model_registry(request: Request) -> ModelRegistry:
 
 def get_model_router(request: Request) -> ModelRouter:
     return request.app.state.model_router
+
+
+def get_agent_registry(request: Request) -> AgentRegistry:
+    return request.app.state.agent_registry
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -42,5 +47,6 @@ def get_chat_service(router: ModelRouter = Depends(get_model_router)) -> ChatSer
 def get_conversation_service(
     session: AsyncSession = Depends(get_db),
     chat_service: ChatService = Depends(get_chat_service),
+    agent_registry: AgentRegistry = Depends(get_agent_registry),
 ) -> ConversationService:
-    return ConversationService(session, chat_service)
+    return ConversationService(session, chat_service, agent_registry)

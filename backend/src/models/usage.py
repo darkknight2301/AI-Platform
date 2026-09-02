@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base
@@ -51,6 +51,11 @@ class Usage(UUIDPrimaryKeyMixin, Base):
     model_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("models.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+
+    # Mirrors Chat.agent_key — set when this usage row came from an
+    # agent run (e.g. ILA) rather than a direct model call. NULL for
+    # every usage row today. See ADR 0012.
+    agent_key: Mapped[str | None] = mapped_column(String(150), nullable=True, index=True)
 
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

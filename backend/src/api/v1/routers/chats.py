@@ -62,7 +62,7 @@ async def create_chat(
 ):
     try:
         chat = await conversation.create_chat(
-            user=current_user, model_key=payload.model_key, title=payload.title
+            user=current_user, model_key=payload.model_key, agent_key=payload.agent_key, title=payload.title
         )
     except CONVERSATION_EXCEPTIONS as exc:
         raise to_http_exception(exc) from exc

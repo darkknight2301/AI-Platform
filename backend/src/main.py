@@ -19,6 +19,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.agent_layer.bootstrap import register_default_agents
+from src.agent_layer.registry import AgentRegistry
 from src.api.v1.router import api_router
 from src.core.config import get_settings
 from src.core.logging import configure_logging
@@ -52,6 +54,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "model_registry_initialized",
         extra={"registered_models": [m.model_key for m in model_registry.list_models()]},
+    )
+
+    # Agent layer (ADR 0012) — additive, independent of the model
+    # registry above. With ILA_ENABLED unset/false (the default),
+    # this registers nothing and every existing Qwen-only chat path is
+    # unaffected.
+    agent_registry = AgentRegistry()
+    register_default_agents(agent_registry, model_router=app.state.model_router)
+    app.state.agent_registry = agent_registry
+    logger.info(
+        "agent_registry_initialized",
+        extra={"registered_agents": [a.agent_key for a in agent_registry.list_agents()]},
     )
 
     yield
