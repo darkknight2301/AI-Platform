@@ -21,7 +21,7 @@ class AgentAdapter(ABC):
     uniform streaming contract now — before a second agent exists to
     validate it against — would be guessing. Add it when an agent
     actually needs it.
-    """₹
+    """
 
     @property
     @abstractmethod

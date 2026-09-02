@@ -43,6 +43,7 @@ async def _to_chat_summary(session: AsyncSession, chat) -> ChatSummary:
         status=chat.status,
         model_id=chat.model_id,
         model_key=model.model_key if model else "",
+        agent_key=chat.agent_key,
         revision=chat.revision,
         created_at=chat.created_at,
         updated_at=chat.updated_at,

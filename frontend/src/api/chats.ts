@@ -20,7 +20,7 @@ export const chatsApi = {
       `/chats${status ? `?status=${status}` : ""}`,
     ),
 
-  create: (input: { model_key: string; title?: string | null }) =>
+  create: (input: { model_key?: string; agent_key?: string; title?: string | null }) =>
     api.post<ChatSummary>("/chats", input),
 
   get: (chatId: string) => api.get<ChatSummary>(`/chats/${chatId}`),

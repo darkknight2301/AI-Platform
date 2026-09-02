@@ -55,7 +55,12 @@ export function ChatPage() {
       return;
     }
     try {
-      const chat = await chatsApi.create({ model_key: models[0].model_key });
+      const selectableModels = models.filter((m) => m.category !== "AGENT");
+      if (selectableModels.length === 0) {
+        setError("No models are available yet. Ask an administrator to enable one.");
+        return;
+      }
+      const chat = await chatsApi.create({ model_key: selectableModels[0].model_key });
       setChats((prev) => [chat, ...prev]);
       setActiveChatId(chat.id);
       setSidebarOpen(false);
@@ -65,6 +70,27 @@ export function ChatPage() {
         err instanceof ApiError
           ? err.message
           : "Couldn't create a new chat. Please try again.",
+      );
+    }
+  }
+
+  async function handleNewAgentChat() {
+    const agentModel = models.find((m) => m.category === "AGENT");
+    if (!agentModel) {
+      setError("The ILA agent is not currently available.");
+      return;
+    }
+    try {
+      const chat = await chatsApi.create({ agent_key: agentModel.model_key });
+      setChats((prev) => [chat, ...prev]);
+      setActiveChatId(chat.id);
+      setSidebarOpen(false);
+      void refreshQuota();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't create a new ILA chat. Please try again.",
       );
     }
   }
@@ -117,6 +143,8 @@ export function ChatPage() {
             setSidebarOpen(false);
           }}
           onNewChat={handleNewChat}
+          onNewAgentChat={() => void handleNewAgentChat()}
+          agentAvailable={models.some((m) => m.category === "AGENT")}
           onRename={(id, title) => void handleRename(id, title)}
           onArchive={(id) => void handleArchive(id)}
           onDelete={(id) => void handleDelete(id)}

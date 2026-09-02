@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Archive,
+  Code2,
   LayoutDashboard,
   LogOut,
   MessageSquarePlus,
@@ -18,6 +19,8 @@ export function Sidebar({
   activeChatId,
   onSelectChat,
   onNewChat,
+  onNewAgentChat,
+  agentAvailable,
   onRename,
   onArchive,
   onDelete,
@@ -30,6 +33,10 @@ export function Sidebar({
   activeChatId: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
+  // Optional: only meaningful when an ILA-style agent is enabled (see
+  // ADR 0012). Omitted/undefined -> today's UI, unchanged.
+  onNewAgentChat?: () => void;
+  agentAvailable?: boolean;
   onRename: (id: string, title: string) => void;
   onArchive: (id: string) => void;
   onDelete: (id: string) => void;
@@ -64,6 +71,13 @@ export function Sidebar({
         <MessageSquarePlus size={16} />
         New chat
       </button>
+
+      {agentAvailable && onNewAgentChat && (
+        <button className="new-chat-btn new-agent-chat-btn" onClick={onNewAgentChat} disabled={newChatDisabled}>
+          <Code2 size={16} />
+          New ILA chat
+        </button>
+      )}
 
       <div className="sidebar-search">
         <Search size={14} />

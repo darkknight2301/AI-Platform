@@ -205,8 +205,8 @@ logic) is **not** touched:
 | `src/models/usage.py` | + nullable `agent_key: str \| None` column (mirrors chat.py, for usage rows attributable to an agent run rather than a direct model call) |
 | `src/models/enums.py` | + `ModelCategory.AGENT` |
 | `alembic/versions/` | one new migration: 2 columns + enum value + the one `ila-agent` seed row |
-| `src/services/chat_service.py` | **one** new branch at chat creation: if the request specifies an agent (not a model_key), set `agent_key` instead of resolving/validating a `model_id` via `ModelRouter`. Everything else in this file (title generation, chat lifecycle) is untouched. |
-| `src/services/conversation_service.py` | **one** new branch at message-send: `if chat.agent_key: delegate to AgentRegistry` else existing `ModelRouter` path, unchanged. Ownership/ RBAC checks happen before this branch, so they cover both paths identically without duplication. |
+| `src/services/chat_service.py` | Not modified — chat title generation etc. is model/agent-agnostic already. |
+| `src/services/conversation_service.py` | **Implemented for `create_chat` + `send_message` only** (new `_call_agent` branch mirroring `_reserve_call_release`). `edit_message`/`regenerate_message`/streaming variants are NOT yet agent-aware — deferred, same additive pattern applies when needed. Ownership/RBAC checks are unchanged and run before any branch. |
 | `src/main.py` | + `agent_layer.bootstrap.register_default_agents(...)` call, alongside the existing `model_layer.bootstrap.register_default_providers(...)` call — same pattern, new line |
 | `src/schemas/chat.py` | chat-creation request gains an optional `agent_key` alternative to `model_key` (mutually exclusive) |
 | `frontend/src/api/types.ts`, `ModelInfo` | `category` gains `"AGENT"` as a possible value — `ModelSelector.tsx` needs **zero changes**, since it already renders whatever `GET /models` returns generically (verified by reading the component: it maps over `models`, keys off `model_key`/`category`/`display_name` with no Qwen-specific logic) |
@@ -300,11 +300,36 @@ Workspace machine (remote host from workspace info)
     virtual filesystem/ACL layer)
   - runs as an unprivileged, workspace-scoped OS user (or inside a
     per-workspace container) — this is the actual isolation boundary
-    for "run commands" style capability, not a command allow-list
-    (a general-purpose terminal cannot be meaningfully allow-listed
-    without defeating its purpose; the isolation has to be at the
-    process/OS/container level)
+    for file access, not something the backend re-enforces itself
 ```
+
+**Resolved: credentials are shared/backend-held, not per-user.** SSH
+access to workspace machines uses one backend-held key (or a small,
+fixed set — one per machine/fleet), not a distinct credential per
+user. The actual access boundary is **which folder** a session is
+scoped to, not which OS account: the backend resolves "the folder
+suggested by the backend" for a given ILA session/user and launches
+that session's `code-server` with that exact directory as its
+workspace root. A user never gets broader filesystem reach than the
+one folder the backend hands them — enforced by what path
+`code-server` is started against, same mechanism as before, now
+confirmed as the actual design rather than one of two options.
+
+**Resolved: terminal is disabled.** Not a UI-only toggle — VS Code
+settings/product-config can hide the terminal panel, but that's
+client-side and not trustworthy as the actual control. The real
+enforcement is at the proxy layer this platform already owns:
+`proxy.py` (below) recognizes `code-server`'s terminal-specific
+WebSocket route and refuses to forward it (403), independent of
+whatever the `code-server` UI shows. This also simplifies the earlier
+open question about command-execution controls — with no terminal,
+there is no general-purpose command execution to bound, so that
+concern drops out of scope rather than needing a policy.
+
+**Confirmed in scope, unchanged from `code-server` defaults:** file
+create/delete/rename stays enabled in the editor's file explorer — no
+proxy-layer restriction needed there, since it's already scoped to
+the one allowed folder by the workspace-root argument above.
 
 ### New backend package: `src/agent_layer/workspace/`
 
@@ -325,7 +350,11 @@ proxy.py                   FastAPI routes that reverse-proxy
                           code-server port — this is the ONLY thing
                           the browser ever talks to; it never sees
                           host/port/credentials of the workspace
-                          machine directly
+                          machine directly. Also where the terminal
+                          WebSocket route is specifically denied
+                          (403) — see "Resolved: terminal is
+                          disabled" above; this is the actual security
+                          control, not the code-server UI setting.
 session_registry.py         tracks active tunnels (in-memory, or
                           Redis — already in the stack for rate
                           limiting, reusable here too if the backend
@@ -339,12 +368,13 @@ session_registry.py         tracks active tunnels (in-memory, or
 
 - SSH private key(s) for workspace machines: stored server-side only,
   filesystem path referenced via config/env (same posture as
-  `SECRET_KEY` today — not committed, not returned by any API). For a
-  small number of workspace machines, one key + host-scoped
-  restricted OS user is enough to start; if/when this needs to scale
-  to per-workspace or per-tenant credentials, that calls for a real
+  `SECRET_KEY` today — not committed, not returned by any API).
+  **Shared/backend-held, not per-user** (resolved above) — the access
+  boundary is the target folder a session is scoped to, not a
+  distinct OS identity per user. If/when this needs to scale beyond a
+  small, fixed set of workspace machines, that calls for a real
   secrets manager (Vault, cloud provider's secrets service) — flagged
-  as a deliberate phase-2-or-later upgrade, not built prematurely.
+  as a deliberate later upgrade, not built prematurely.
 - The key/credential **never** crosses into the browser or into any
   API response — the backend is the only thing that ever uses it.
 - `code-server`'s own access (its `--auth` mechanism / a per-session
@@ -467,17 +497,11 @@ a new surface, not a new rule).
 
 ## Blockers before Phase 1 can start writing `ila_adapter.py` for real
 
-1. **ILA's actual Python interface** — no file has been provided yet.
-   Needed: is it sync or async, does it expose a streaming/generator
-   API or only a final result, how does it report which tool/step is
-   currently running (if it does), and what, if anything, does it
-   expect to be handed for model access (a callable? an object
-   matching some interface it already defines?).
-2. **Workspace credential storage preference** — the design above
-   assumes server-held SSH keys on local disk with restricted
-   permissions as the Phase-1-appropriate starting point; confirm
-   that's acceptable, or state a different preferred mechanism, before
-   `ssh_manager.py`/`workspace_service.py` are built.
+**Resolved.** ILA's interface: `ILA(**kwargs).main(query="")` — plain,
+blocking Python class, no async/streaming. `ila_adapter.py` runs it
+via `asyncio.to_thread` with a timeout; `constructor_kwargs` are
+forwarded verbatim from config rather than guessed (see
+`agent_layer/config.py`). Credential model: resolved above.
 
 ## Consequences
 

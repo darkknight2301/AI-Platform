@@ -19,10 +19,14 @@ from __future__ import annotations
 import logging
 import os
 
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.agent_layer.adapters.ila_adapter import ILAAgentAdapter
 from src.agent_layer.config import ILAAgentConfig, load_ila_config
 from src.agent_layer.registry import AgentRegistry
 from src.model_layer.router import ModelRouter
+from src.models.ai_model import AIModel
 
 logger = logging.getLogger(__name__)
 
@@ -56,3 +60,22 @@ def register_default_agents(registry: AgentRegistry, *, model_router: ModelRoute
 
     registry.register(agent_key=adapter.agent_key, metadata={"display_name": config.display_name}, adapter=adapter)
     logger.info("ila_agent_registered", extra={"agent_key": adapter.agent_key})
+
+
+async def sync_agent_model_visibility(session: AsyncSession) -> None:
+    """Keep the `ila-agent` placeholder `AIModel` row's `is_enabled`
+    in sync with `ILA_ENABLED` at startup.
+
+    Without this, the row (seeded with `is_enabled=False` — see the
+    migration) would only ever be toggled by hand through the admin
+    model-management endpoint, meaning `ILA_ENABLED=false` would stop
+    ILA from actually running but NOT stop it from appearing as a
+    selectable option in `GET /models` (which filters on this exact
+    column) — the option would be visible but broken, which is worse
+    than not reversible at all. This call is what makes "disabling
+    ILA_ENABLED restores existing behavior" true for the frontend's
+    model list, not just for the backend's routing.
+    """
+    enabled = _is_enabled("ILA_ENABLED")
+    await session.execute(update(AIModel).where(AIModel.model_key == ILA_AGENT_KEY).values(is_enabled=enabled))
+    await session.commit()

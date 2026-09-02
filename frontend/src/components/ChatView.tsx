@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Menu } from "lucide-react";
+import { AlertTriangle, Code2, Menu } from "lucide-react";
 import { chatsApi, messagesApi } from "../api/chats";
 import { ApiError } from "../api/client";
 import type { ChatSummary, MessageOut, ModelInfo, StreamEvent } from "../api/types";
@@ -114,7 +114,27 @@ export function ChatView({
           </button>
           <span className="chat-title-display">{chat.title}</span>
         </div>
-        <ModelSelector models={models} selectedKey={chat.model_key} onSelect={handleModelChange} disabled={busy} />
+        {chat.agent_key ? (
+          // Not another model — an ILA-session action. See ADR 0012;
+          // the workspace/Web IDE backend (§4 of that ADR) isn't built
+          // yet, so this is intentionally disabled rather than faking
+          // a working destination.
+          <button
+            className="open-vscode-btn"
+            disabled
+            title="Workspace/Web IDE isn't available yet for this session."
+          >
+            <Code2 size={14} />
+            Open VS Code
+          </button>
+        ) : (
+          <ModelSelector
+            models={models.filter((m) => m.category !== "AGENT")}
+            selectedKey={chat.model_key}
+            onSelect={handleModelChange}
+            disabled={busy}
+          />
+        )}
       </header>
 
       <div className="message-list" ref={listRef}>

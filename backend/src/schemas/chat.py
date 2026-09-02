@@ -33,6 +33,7 @@ class ChatSummary(BaseModel):
     status: ChatStatus
     model_id: uuid.UUID
     model_key: str
+    agent_key: str | None = None
     revision: int
     created_at: datetime
     updated_at: datetime

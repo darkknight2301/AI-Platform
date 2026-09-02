@@ -6,7 +6,7 @@ export type Role = "USER" | "MANAGER" | "DEVELOPER" | "OWNER";
 export type UserStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED" | "PENDING";
 export type ChatStatus = "ACTIVE" | "ARCHIVED" | "DELETED";
 export type MessageRole = "SYSTEM" | "USER" | "ASSISTANT" | "TOOL";
-export type ModelCategory = "CODER" | "NLP";
+export type ModelCategory = "CODER" | "NLP" | "AGENT";
 export type RenewalPolicy = "ROLLING_24H" | "DAILY_RESET_UTC";
 
 export interface UserPublic {
@@ -42,6 +42,7 @@ export interface ChatSummary {
   status: ChatStatus;
   model_id: string;
   model_key: string;
+  agent_key: string | null;
   revision: number;
   created_at: string;
   updated_at: string;

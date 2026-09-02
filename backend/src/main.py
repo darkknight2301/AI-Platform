@@ -19,11 +19,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.agent_layer.bootstrap import register_default_agents
+from src.agent_layer.bootstrap import register_default_agents, sync_agent_model_visibility
 from src.agent_layer.registry import AgentRegistry
 from src.api.v1.router import api_router
 from src.core.config import get_settings
 from src.core.logging import configure_logging
+from src.db.session import AsyncSessionLocal
 from src.core.middleware import (
     PerformanceMiddleware,
     RateLimitMiddleware,
@@ -67,6 +68,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "agent_registry_initialized",
         extra={"registered_agents": [a.agent_key for a in agent_registry.list_agents()]},
     )
+    async with AsyncSessionLocal() as session:
+        await sync_agent_model_visibility(session)
 
     yield
 
