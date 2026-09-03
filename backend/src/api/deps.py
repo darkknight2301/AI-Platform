@@ -10,6 +10,9 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.agent_layer.registry import AgentRegistry
+from src.agent_layer.workspace.session_registry import SessionRegistry
+from src.agent_layer.workspace.ssh_manager import SSHManager
+from src.agent_layer.workspace.workspace_service import WorkspaceService
 from src.db.session import AsyncSessionLocal, get_db
 from src.model_layer.registry import ModelRegistry
 from src.model_layer.router import ModelRouter
@@ -27,6 +30,17 @@ def get_model_router(request: Request) -> ModelRouter:
 
 def get_agent_registry(request: Request) -> AgentRegistry:
     return request.app.state.agent_registry
+
+
+def get_workspace_service(
+    request: Request, session: AsyncSession = Depends(get_db)
+) -> WorkspaceService:
+    return WorkspaceService(
+        session,
+        config=request.app.state.workspace_config,
+        ssh_manager=request.app.state.ssh_manager,
+        session_registry=request.app.state.session_registry,
+    )
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:

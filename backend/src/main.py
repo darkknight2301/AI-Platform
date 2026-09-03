@@ -11,6 +11,8 @@ wired yet.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -21,6 +23,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.agent_layer.bootstrap import register_default_agents, sync_agent_model_visibility
 from src.agent_layer.registry import AgentRegistry
+from src.agent_layer.workspace.config import load_workspace_config
+from src.agent_layer.workspace.session_registry import SessionRegistry
+from src.agent_layer.workspace.ssh_manager import SSHManager
 from src.api.v1.router import api_router
 from src.core.config import get_settings
 from src.core.logging import configure_logging
@@ -71,10 +76,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with AsyncSessionLocal() as session:
         await sync_agent_model_visibility(session)
 
+    # Workspace/Web IDE subsystem (ADR 0012, §Web IDE) — additive,
+    # off by default (WORKSPACE_ENABLED=false). SSHManager is only
+    # ever invoked from workspace routes; nothing else in the app
+    # touches it.
+    workspace_config = load_workspace_config()
+    app.state.workspace_config = workspace_config
+    app.state.ssh_manager = SSHManager(workspace_config)
+    app.state.session_registry = SessionRegistry(idle_timeout_seconds=workspace_config.idle_timeout_seconds)
+    logger.info("workspace_subsystem_initialized", extra={"enabled": workspace_config.enabled})
+
+    sweep_task: asyncio.Task | None = None
+    if workspace_config.enabled:
+        sweep_task = asyncio.create_task(_sweep_idle_workspace_sessions(app.state.session_registry))
+
     yield
+
+    if sweep_task is not None:
+        sweep_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweep_task
 
     await close_providers(model_registry)
     logger.info("application_shutdown")
+
+
+async def _sweep_idle_workspace_sessions(session_registry: SessionRegistry) -> None:
+    """Periodically closes workspace SSH sessions idle past
+    WORKSPACE_IDLE_TIMEOUT_SECONDS (ADR 0012, "Session lifecycle").
+    Without this running, `SessionRegistry.sweep_idle()` existing as a
+    method does nothing on its own — this loop is what actually calls
+    it. Runs at a fixed 60s cadence regardless of the configured
+    timeout; fine for a 30-minute-scale timeout, not meant to be
+    precise to the second.
+    """
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await session_registry.sweep_idle()
+        except Exception:
+            logger.error("workspace_idle_sweep_failed", exc_info=True)
 
 
 app = FastAPI(

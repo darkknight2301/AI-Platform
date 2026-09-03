@@ -467,9 +467,18 @@ a new surface, not a new rule).
   option repeats the exact process-locality mistake already fixed
   once in this codebase (`RateLimitMiddleware`, see
   `docs/architecture/final-review.md`'s remediation note) if the
-  backend ever runs `WEB_CONCURRENCY > 1` — recommend defaulting to
-  the Redis-backed option from the start here rather than repeating
-  that lesson a second time.
+  backend ever runs `WEB_CONCURRENCY > 1` **for the WebSocket/persistent
+  channel path specifically**. Auth itself no longer has this problem
+  (`tickets.py` is stateless, verified identically by any worker).
+  What's still open: a WS reconnect landing on a different worker than
+  the one holding the live SSH channel won't find it and will
+  reprovision — not fixed in this pass, same options as before (sticky
+  routing, or moving tunnel ownership out of the worker pool). The
+  **HTTP proxy path's own, separate bug** — reusing a one-shot
+  `Connection: close` channel from the registry, which could hand a
+  second request a dead connection — **was found and fixed in Phase 5**
+  (`open_ephemeral_channel` vs. `open_persistent_channel`; see
+  `workspace_service.py`), not left as a known limitation.
 
 ## Phased implementation plan
 

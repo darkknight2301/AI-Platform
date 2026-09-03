@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Code2, Menu } from "lucide-react";
 import { chatsApi, messagesApi } from "../api/chats";
 import { ApiError } from "../api/client";
+import { workspacesApi } from "../api/workspaces";
 import type { ChatSummary, MessageOut, ModelInfo, StreamEvent } from "../api/types";
 import { MessageBubble } from "./MessageBubble";
 import { Composer } from "./Composer";
@@ -29,6 +30,7 @@ export function ChatView({
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [workspaceConnecting, setWorkspaceConnecting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -105,6 +107,31 @@ export function ChatView({
     }
   }
 
+  async function handleOpenVsCode() {
+    setWorkspaceConnecting(true);
+    setError(null);
+    try {
+      // connect() sets the auth cookie connect_url's path relies on
+      // (see api/workspaces.ts) before this resolves; cookies are
+      // scoped to origin+path in the browser's cookie jar, not to a
+      // tab, so the new tab opened below picks it up automatically.
+      // connect_url is same-origin (served via the same Nginx origin
+      // as this app in the documented deployment) — an absolute
+      // cross-origin VITE_API_BASE_URL isn't supported by this
+      // navigation yet.
+      const workspace = await workspacesApi.connect(chat.id);
+      window.open(workspace.connect_url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't connect to the workspace. Please try again.",
+      );
+    } finally {
+      setWorkspaceConnecting(false);
+    }
+  }
+
   return (
     <div className="chat-pane">
       <header className="chat-header">
@@ -115,17 +142,15 @@ export function ChatView({
           <span className="chat-title-display">{chat.title}</span>
         </div>
         {chat.agent_key ? (
-          // Not another model — an ILA-session action. See ADR 0012;
-          // the workspace/Web IDE backend (§4 of that ADR) isn't built
-          // yet, so this is intentionally disabled rather than faking
-          // a working destination.
+          // Not another model — an ILA-session action (ADR 0012).
           <button
             className="open-vscode-btn"
-            disabled
-            title="Workspace/Web IDE isn't available yet for this session."
+            onClick={() => void handleOpenVsCode()}
+            disabled={workspaceConnecting}
+            title="Open this session's engineering workspace in VS Code"
           >
             <Code2 size={14} />
-            Open VS Code
+            {workspaceConnecting ? "Connecting…" : "Open VS Code"}
           </button>
         ) : (
           <ModelSelector

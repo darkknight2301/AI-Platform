@@ -16,3 +16,7 @@ email-validator==2.3.0
 # Deployments that don't set RATE_LIMIT_REDIS_URL don't need this
 # installed; the import is lazy and confined to that one code path.
 redis==5.2.1
+# Only required if WORKSPACE_ENABLED is set (Web IDE, backend-side SSH
+# to the workspace host — see src/agent_layer/workspace/ssh_manager.py).
+# Import is lazy; not needed if WORKSPACE_ENABLED stays unset.
+asyncssh==2.18.0

@@ -73,6 +73,18 @@ class ModelCategory(str, enum.Enum):
     AGENT = "AGENT"
 
 
+class WorkspaceStatus(str, enum.Enum):
+    """Lifecycle of a Workspace row (ADR 0012, §Web IDE) — deliberately
+    small: this tracks *provisioning* state, not live-connection state
+    (that's `session_registry.py`'s job, in-memory/per-process, not
+    persisted here)."""
+
+    PENDING = "PENDING"  # row exists, code-server not yet confirmed running
+    ACTIVE = "ACTIVE"  # ssh_manager has confirmed code-server is reachable
+    STOPPED = "STOPPED"  # explicitly stopped (idle timeout or user action)
+    ERROR = "ERROR"  # last provisioning attempt failed
+
+
 class AuditResult(str, enum.Enum):
     SUCCESS = "SUCCESS"
     FAILURE = "FAILURE"
