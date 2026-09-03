@@ -1,10 +1,46 @@
 # 0012 — ILA agent integration and browser Web IDE
 
 ## Status
-**Proposed — not implemented.** Per explicit instruction, no code
-changes have been made yet. This is the design to review/approve
-before Phase 1 coding starts. Two open blockers before implementation
-can begin are called out at the end.
+**Implemented through Phase 5 (agent layer, Web IDE proxy, hardening),
+integration contract corrected.** Originally built against an assumed
+`ILA(**kwargs).main(query="")` interface; ILA's author later provided
+the actual, authoritative interface —
+
+```python
+class ILA:
+    def __init__(self, **kwargs):
+        self.chunck_path
+        self.vector_db_path
+        self.artifacts_dir
+        self.workspace_dir
+
+    def generate(self, query, mode, function_name, step,
+                 test_case_desc, overwrite_step, output_file) -> str
+```
+
+— fixed at `backend/src/ila/`, not a pluggable external module. All
+call-signature-dependent code has been updated to match: `ila_adapter.py`
+now calls `.generate(...)` positionally (no `.main()` anywhere),
+`AgentRequest.ila_params` (`schemas.py`) carries the five per-call
+fields (`mode`/`function_name`/`step`/`test_case_desc`/`overwrite_step`/
+`output_file`), and `SendMessageRequest.ila` (`schemas/message.py`)
+is the API-level entry point — required, not defaulted, for any
+agent-mode `send_message` call, since these are task-specific values
+this platform has no basis to guess. `ila_adapter.py` imports
+`from src.ila import ILA` directly; `backend/src/ila/` itself is
+ILA's own, pre-existing implementation and was not created or
+modified by this integration (per explicit instruction) — the
+adapter will only actually resolve once that module is physically
+present in a given deployment.
+
+One open, explicitly-flagged assumption: the constructor's KEYWORD
+argument names for its four documented dependencies aren't part of
+the given interface (only the resulting `self.*` attribute names are,
+one of which — `chunck_path` — reads as a typo). `config.py` exposes
+four correctly-spelled env vars merged into `constructor_kwargs`
+under those spellings, with `ILA_CONSTRUCTOR_KWARGS` (JSON) as an
+override if the real constructor's kwargs are spelled differently —
+see `config.py`'s module docstring.
 
 ## Context
 
@@ -506,11 +542,15 @@ a new surface, not a new rule).
 
 ## Blockers before Phase 1 can start writing `ila_adapter.py` for real
 
-**Resolved.** ILA's interface: `ILA(**kwargs).main(query="")` — plain,
-blocking Python class, no async/streaming. `ila_adapter.py` runs it
-via `asyncio.to_thread` with a timeout; `constructor_kwargs` are
-forwarded verbatim from config rather than guessed (see
-`agent_layer/config.py`). Credential model: resolved above.
+**Resolved, then corrected.** ILA's interface was initially given as
+`ILA(**kwargs).main(query="")`; the actual, authoritative interface
+(see Status above) is `ILA(**kwargs).generate(query, mode,
+function_name, step, test_case_desc, overwrite_step, output_file) ->
+str`. Both are plain, blocking Python calls, no async/streaming —
+`ila_adapter.py` still runs it via `asyncio.to_thread` with a
+timeout. `constructor_kwargs` are still forwarded from config rather
+than guessed (see `agent_layer/config.py`). Credential model:
+resolved above.
 
 ## Consequences
 

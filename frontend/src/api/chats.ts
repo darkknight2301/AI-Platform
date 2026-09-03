@@ -4,6 +4,7 @@ import type {
   ChatHistoryResponse,
   ChatStatus,
   ChatSummary,
+  ILAGenerateParams,
   MessageExchangeResponse,
   MessageRevisionsResponse,
   ModelInfo,
@@ -32,8 +33,12 @@ export const chatsApi = {
 
   history: (chatId: string) => api.get<ChatHistoryResponse>(`/chats/${chatId}/history`),
 
-  sendMessage: (chatId: string, content: string) =>
-    api.post<MessageExchangeResponse>(`/chats/${chatId}/messages`, { content, stream: false }),
+  // `ila` is only meaningful (and required) when the chat is
+  // agent-backed (chat.agent_key set) — see backend
+  // schemas/message.py's SendMessageRequest.ila docstring. Omitted
+  // entirely for ordinary model-backed chats, unchanged from before.
+  sendMessage: (chatId: string, content: string, ila?: ILAGenerateParams) =>
+    api.post<MessageExchangeResponse>(`/chats/${chatId}/messages`, { content, stream: false, ila }),
 
   streamMessage: (chatId: string, content: string, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) =>
     streamPost(`/chats/${chatId}/messages`, { content, stream: true }, onEvent, signal),

@@ -7,6 +7,15 @@ export type UserStatus = "ACTIVE" | "INACTIVE" | "SUSPENDED" | "PENDING";
 export type ChatStatus = "ACTIVE" | "ARCHIVED" | "DELETED";
 export type MessageRole = "SYSTEM" | "USER" | "ASSISTANT" | "TOOL";
 export type ModelCategory = "CODER" | "NLP" | "AGENT";
+
+export interface ILAGenerateParams {
+  mode: string;
+  function_name: string;
+  step: string;
+  test_case_desc?: string;
+  overwrite_step?: boolean;
+  output_file: string;
+}
 export type RenewalPolicy = "ROLLING_24H" | "DAILY_RESET_UTC";
 
 export interface UserPublic {

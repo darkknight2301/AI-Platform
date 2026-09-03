@@ -1,28 +1,38 @@
 """
 `ILAAgentAdapter`: wraps the real ILA module behind `AgentAdapter`.
 
-ILA's actual interface, as specified by its author: a plain Python
-class, `ILA(**kwargs)`, used per-request as `ILA(**kwargs).main(query="...")`
-— synchronous, not async, and (as far as this adapter assumes) returns
-a single final result rather than streaming. Two consequences of that:
+ILA's authoritative, fixed public interface (`backend/src/ila/`):
 
-1. The ILA class is imported dynamically (`importlib`), by
-   `ILAAgentConfig.module_path`/`class_name`, rather than a hardcoded
-   `from <package> import ILA` — this file has no compile-time
-   dependency on the ILA module actually being installed unless
-   `ILA_ENABLED=true` selects it.
-2. `.main()` is run via `asyncio.to_thread` (with a timeout), not
-   awaited directly — a blocking call of unknown duration must never
-   run on the event loop, or it would stall every other in-flight
-   request on the same worker process for as long as ILA takes.
+    class ILA:
+        def __init__(self, **kwargs):
+            self.chunck_path
+            self.vector_db_path
+            self.artifacts_dir
+            self.workspace_dir
 
-`kwargs` for the constructor are NOT guessed at here — see
-`config.py`'s `constructor_kwargs`/module docstring for why.
+        def generate(self, query, mode, function_name, step,
+                      test_case_desc, overwrite_step, output_file) -> str
+
+Not touched, not reimplemented, not assumed beyond this. Two
+consequences:
+
+1. Imported directly (`from src.ila import ILA`), not dynamically —
+   ILA is a fixed, first-party module at a known location, not a
+   pluggable external one (unlike the previous version of this file).
+2. `.generate()` is synchronous/blocking, same as the previously
+   assumed `.main()` was — still run via `asyncio.to_thread` with a
+   timeout, for the same reason: a blocking call of unknown duration
+   must never run on the event loop.
+
+`generate()`'s return value (`generated_code: str`) is returned as-is
+as `AgentResult.output` — this platform does NOT duplicate ILA's own
+`output_file` write; ILA already performs that update itself per its
+documented behavior. See `AgentRequest.ila_params` for where each
+positional argument comes from.
 """
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
 
 from src.agent_layer.agent_interface import AgentAdapter
@@ -35,45 +45,66 @@ from src.model_layer.schemas import TokenUsage
 logger = logging.getLogger(__name__)
 
 
-def _resolve_ila_class(module_path: str, class_name: str):
+def _import_ila_class():
     try:
-        module = importlib.import_module(module_path)
+        from src.ila import ILA
     except ImportError as exc:
         raise AgentConfigurationError(
-            f"Could not import ILA_MODULE_PATH={module_path!r}: {exc}"
+            "Could not import ILA from src.ila — the ILA module is not present "
+            "under backend/src/ila/ in this deployment."
         ) from exc
-    try:
-        return getattr(module, class_name)
-    except AttributeError as exc:
-        raise AgentConfigurationError(
-            f"Module {module_path!r} has no class {class_name!r} (ILA_CLASS_NAME)."
-        ) from exc
-
-
-def _coerce_output(raw_result: object) -> str:
-    """`.main()`'s return type isn't specified beyond "the desired
-    engineering output" — accept a plain string as-is, or fall back to
-    str() for anything else, rather than assuming a specific object
-    shape (e.g. `.content`/`.text`) ILA may not actually have."""
-    if isinstance(raw_result, str):
-        return raw_result
-    return str(raw_result)
+    return ILA
 
 
 class ILAAgentAdapter(AgentAdapter):
     def __init__(self, *, config: ILAAgentConfig, model_router: ModelRouter) -> None:
         self._config = config
         self._model_router = model_router
-        self._ila_class = _resolve_ila_class(config.module_path, config.class_name)
+        ila_class = _import_ila_class()
+        kwargs = dict(config.constructor_kwargs)
+        # Same reuse point the previous version of this adapter had —
+        # unrelated to the fixed generate() signature above, and NOT
+        # part of ILA's documented constructor deps (chunk/vector-db/
+        # artifacts/workspace); left as a best-effort forward, kept
+        # only if ILA's constructor actually accepts it (see except
+        # below rather than assuming it does).
+        if config.default_model_key:
+            kwargs.setdefault("default_model_key", config.default_model_key)
+        kwargs.setdefault("model_router", model_router)
+        try:
+            self._ila = ila_class(**kwargs)
+        except TypeError as exc:
+            raise AgentConfigurationError(
+                f"ILA(**kwargs) rejected the configured constructor arguments: {exc}. "
+                "Check ILA_CHUNK_PATH/ILA_VECTOR_DB_PATH/ILA_ARTIFACTS_DIR/"
+                "ILA_WORKSPACE_DIR and ILA_CONSTRUCTOR_KWARGS against ILA's actual "
+                "__init__ signature."
+            ) from exc
 
     @property
     def agent_key(self) -> str:
         return self._config.agent_key
 
     async def run(self, request: AgentRequest) -> AgentResult:
+        params = request.ila_params
+        if params is None:
+            raise AgentExecutionError(
+                "ILA requires mode/function_name/step/output_file — none were provided."
+            )
+
         try:
-            raw_result = await asyncio.wait_for(
-                asyncio.to_thread(self._run_sync, request), timeout=self._config.timeout_seconds
+            generated_code = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._ila.generate,
+                    request.query,
+                    params.mode,
+                    params.function_name,
+                    params.step,
+                    params.test_case_desc,
+                    params.overwrite_step,
+                    params.output_file,
+                ),
+                timeout=self._config.timeout_seconds,
             )
         except TimeoutError as exc:
             logger.error(
@@ -91,26 +122,9 @@ class ILAAgentAdapter(AgentAdapter):
 
         return AgentResult(
             agent_key=self.agent_key,
-            output=_coerce_output(raw_result),
-            # ILA's own usage reporting, if any, isn't part of the
-            # confirmed interface (`.main(query=...) -> output`) — left
-            # at zero here rather than guessed. If/when ILA reports
-            # token usage from its internal model calls, wire it
-            # through here instead of leaving this at zero.
+            output=generated_code,
+            # ILA's usage reporting, if any, isn't part of the
+            # confirmed interface — left at zero rather than guessed,
+            # same as the previous version of this file.
             usage=TokenUsage(input_tokens=0, output_tokens=0, total_tokens=0),
-            raw_output=raw_result if not isinstance(raw_result, str) else None,
         )
-
-    def _run_sync(self, request: AgentRequest) -> object:
-        kwargs = dict(self._config.constructor_kwargs)
-        # Give ILA a way to reach the platform's existing models
-        # through the same ModelRouter every Qwen call already uses —
-        # concrete reuse of existing infra (ADR 0012), not a second
-        # HTTP client. `model_router` is the assumed kwarg name ILA's
-        # constructor looks for; if ILA's real signature differs, only
-        # this one line needs to change.
-        kwargs.setdefault("model_router", self._model_router)
-        if self._config.default_model_key:
-            kwargs.setdefault("default_model_key", self._config.default_model_key)
-        instance = self._ila_class(**kwargs)
-        return instance.main(query=request.query)

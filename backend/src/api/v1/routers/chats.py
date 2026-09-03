@@ -185,7 +185,11 @@ async def send_message(
 
     try:
         user_message, assistant_message = await conversation.send_message(
-            user=current_user, chat_id=chat_id, content=payload.content, request_id=request_id
+            user=current_user,
+            chat_id=chat_id,
+            content=payload.content,
+            request_id=request_id,
+            ila=payload.ila,
         )
     except CONVERSATION_EXCEPTIONS as exc:
         raise to_http_exception(exc) from exc

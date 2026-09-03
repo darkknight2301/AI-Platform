@@ -3,7 +3,7 @@ import { AlertTriangle, Code2, Menu } from "lucide-react";
 import { chatsApi, messagesApi } from "../api/chats";
 import { ApiError } from "../api/client";
 import { workspacesApi } from "../api/workspaces";
-import type { ChatSummary, MessageOut, ModelInfo, StreamEvent } from "../api/types";
+import type { ChatSummary, ILAGenerateParams, MessageOut, ModelInfo, StreamEvent } from "../api/types";
 import { MessageBubble } from "./MessageBubble";
 import { Composer } from "./Composer";
 import { EditBox } from "./EditBox";
@@ -84,9 +84,32 @@ export function ChatView({
     }
   }
 
-  function handleSend(content: string) {
+  // ILA doesn't support streaming yet (backend rejects stream: true
+  // for agent-mode chats — see conversation_service.prepare_send_stream).
+  // Same pending/busy/reload lifecycle as runStream, just without SSE
+  // events to accumulate.
+  async function runNonStreaming(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setStreamError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setStreamError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setPendingUserContent(null);
+      setBusy(false);
+      await loadHistory();
+      onAfterExchange();
+    }
+  }
+
+  function handleSend(content: string, ila?: ILAGenerateParams) {
     setPendingUserContent(content);
-    void runStream((onEvent, signal) => chatsApi.streamMessage(chat.id, content, onEvent, signal));
+    if (chat.agent_key) {
+      void runNonStreaming(() => chatsApi.sendMessage(chat.id, content, ila));
+    } else {
+      void runStream((onEvent, signal) => chatsApi.streamMessage(chat.id, content, onEvent, signal));
+    }
   }
 
   function handleEdit(messageId: string, content: string) {
@@ -246,7 +269,7 @@ export function ChatView({
       </div>
 
       <div className="composer-wrap">
-        <Composer onSend={handleSend} disabled={busy || loading} />
+        <Composer onSend={handleSend} disabled={busy || loading} ilaMode={!!chat.agent_key} />
       </div>
     </div>
   );

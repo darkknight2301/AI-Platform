@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.agent_layer.errors import AgentError
 from src.agent_layer.registry import AgentNotFoundError, AgentRegistry
-from src.agent_layer.schemas import AgentRequest
+from src.agent_layer.schemas import AgentRequest, ILAGenerateParams
 from src.db.session import AsyncSessionLocal
 from src.model_layer.schemas import ModelMessage, ModelRequest, ModelResponse
 from src.models.ai_model import AIModel
@@ -292,7 +292,14 @@ class ConversationService:
         return message
 
     async def _call_agent(
-        self, *, user: User, chat: Chat, agent_key: str, query: str, context: list[Message]
+        self,
+        *,
+        user: User,
+        chat: Chat,
+        agent_key: str,
+        query: str,
+        context: list[Message],
+        ila_params: ILAGenerateParams | None,
     ) -> tuple[ModelResponse, int]:
         """Agent-mode equivalent of `_reserve_call_release` — same
         quota-reservation wrapping (agents can consume real model
@@ -313,7 +320,10 @@ class ConversationService:
             raise ChatServiceError("The requested agent is not available.") from exc
 
         agent_request = AgentRequest(
-            agent_key=agent_key, query=query, history=self._to_model_messages(context)
+            agent_key=agent_key,
+            query=query,
+            history=self._to_model_messages(context),
+            ila_params=ila_params,
         )
         reservation = await quota_service.reserve_tokens(self._session, user)
         start = time.monotonic()
@@ -341,12 +351,22 @@ class ConversationService:
     # --- send a new prompt ---------------------------------------------------
 
     async def send_message(
-        self, *, user: User, chat_id: uuid.UUID, content: str, request_id: str | None
+        self,
+        *,
+        user: User,
+        chat_id: uuid.UUID,
+        content: str,
+        request_id: str | None,
+        ila: ILAGenerateParams | None = None,
     ) -> tuple[Message, Message]:
         chat = await self._get_owned_chat(user, chat_id)
         model = await model_repository.get_by_id(self._session, chat.model_id)
         if model is None:
             raise ModelNotConfiguredError(str(chat.model_id))
+        if chat.agent_key is not None and ila is None:
+            # See SendMessageRequest.ila's docstring — mode/function_name/
+            # step/output_file are task-specific; not guessed here.
+            raise ChatServiceError("This agent requires the 'ila' parameters to be provided.")
 
         user_message = await self._insert_new_slot(
             chat=chat, role=MessageRole.USER, content=content
@@ -361,7 +381,12 @@ class ConversationService:
         try:
             if chat.agent_key is not None:
                 response, elapsed_ms = await self._call_agent(
-                    user=user, chat=chat, agent_key=chat.agent_key, query=content, context=context
+                    user=user,
+                    chat=chat,
+                    agent_key=chat.agent_key,
+                    query=content,
+                    context=context,
+                    ila_params=ila,
                 )
             else:
                 model_request = ModelRequest(
@@ -566,6 +591,12 @@ class ConversationService:
         self, *, user: User, chat_id: uuid.UUID, content: str, request_id: str | None
     ) -> PendingGeneration:
         chat = await self._get_owned_chat(user, chat_id)
+        if chat.agent_key is not None:
+            # Streaming for agent-mode chats is not implemented yet
+            # (ADR 0012 scopes this to send_message only) — fail with
+            # a clear message rather than let this fall through to
+            # ModelRouter with the agent's placeholder model_key.
+            raise ChatServiceError("Streaming is not yet supported for this agent. Use stream: false.")
         model = await model_repository.get_by_id(self._session, chat.model_id)
         if model is None:
             raise ModelNotConfiguredError(str(chat.model_id))

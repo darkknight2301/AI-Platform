@@ -78,6 +78,10 @@ services/           business logic; depends on repositories, never on
 auth/               RBAC dependency chokepoint (require_min_role,
                     require_roles, can_manage_group) — see auth/README.md
 model_layer/        provider-agnostic model abstraction (see below)
+agent_layer/         orchestration/agent abstraction — ILA, and the
+                    Web IDE subsystem. Deliberately separate from
+                    model_layer/ — an agent is NOT a model (see ADR
+                    0012). Off by default (ILA_ENABLED=false).
 schemas/            Pydantic request/response models (API contracts,
                     distinct from models/'s DB tables)
 api/v1/              FastAPI routers — HTTP layer only, delegates to
@@ -128,6 +132,52 @@ providers/
 To add a new model provider: implement `ModelProvider`
 (`provider_interface.py`), register it in `bootstrap.py`. Nothing else
 in the codebase needs to change — that's the point of this layer.
+
+### `backend/src/agent_layer/` — the agent abstraction (Model vs. Agent)
+
+A **model** (Qwen Coder/NLP) answers one request with text via
+`ModelProvider`. An **agent** (ILA) orchestrates models, tools, and a
+vector DB/knowledge base to produce engineering output, and does NOT
+implement `ModelProvider` — see ADR 0012 for why forcing that
+distinction into one interface would be wrong.
+
+```text
+agent_interface.py   AgentAdapter ABC — the only contract, deliberately
+                      smaller than ModelProvider (see its docstring)
+schemas.py             AgentRequest/AgentResult/ILAGenerateParams —
+                       ILA's generate() takes 7 fixed positional args
+                       (query, mode, function_name, step,
+                       test_case_desc, overwrite_step, output_file);
+                       ILAGenerateParams is the typed carrier for the
+                       six of those beyond query, required end-to-end
+                       from SendMessageRequest.ila through to the call
+registry.py             AgentRegistry — agent_key -> AgentAdapter,
+                        structurally mirrors ModelRegistry
+bootstrap.py             registers ILA iff ILA_ENABLED=true; also
+                          keeps the placeholder AIModel row's
+                          is_enabled in sync so a disabled agent
+                          doesn't appear selectable in GET /models
+config.py                  ILA_CHUNK_PATH/VECTOR_DB_PATH/ARTIFACTS_DIR/
+                            WORKSPACE_DIR env vars -> ILA's constructor
+                            kwargs; ILA_DEFAULT_MODE/OVERWRITE_STEP
+adapters/
+  ila_adapter.py             imports `from src.ila import ILA`
+                              directly (fixed, first-party module —
+                              NOT dynamically loaded) and calls
+                              .generate(...) via asyncio.to_thread
+                              (blocking call, timeout-guarded)
+  fake_adapter.py             test double, no real ILA needed
+workspace/                   the Web IDE subsystem — code-server
+                             provisioning over backend-held SSH,
+                             cookie-ticket browser auth, terminal
+                             disabled at the proxy layer. See
+                             docs/adr/0012-*.md, "§Web IDE"
+```
+
+`backend/src/ila/` itself (ILA's actual implementation) is not part
+of this platform's codebase and was not created by this integration —
+`ila_adapter.py` only imports it; it must be present in a given
+deployment for `ILA_ENABLED=true` to actually work.
 
 ### `backend/alembic/versions/` — migrations, in order applied
 
@@ -237,4 +287,5 @@ troubleshooting/README.md  operational troubleshooting reference
 | "What are the known scaling limits?" | `PERFORMANCE.md` |
 | "Is this actually production-ready?" | `docs/architecture/final-review.md` |
 | "How do I run/configure the local Qwen models?" | `docs/model-serving.md` |
+| "How does ILA (the agent) integrate, and how is it different from a model?" | `docs/adr/0012-ila-agent-and-web-ide-integration.md` |
 | "What can a Manager/Owner/Developer/User actually do?" | `docs/{role}-guide/README.md` |

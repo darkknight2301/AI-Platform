@@ -15,6 +15,22 @@ from pydantic import BaseModel, Field
 from src.model_layer.schemas import ModelMessage, TokenUsage
 
 
+class ILAGenerateParams(BaseModel):
+    """Exact positional parameters `ILA.generate()` requires (see
+    `backend/src/ila/`), minus `query` (that's `SendMessageRequest.content`,
+    already collected) and `output_file` is included here since it's
+    per-call, not per-agent config. No defaults on `mode`/`function_name`/
+    `step`/`output_file` — ILA's signature has none either, and this
+    platform doesn't invent any (see ila_adapter.py's docstring)."""
+
+    mode: str
+    function_name: str
+    step: str
+    test_case_desc: str = ""
+    overwrite_step: bool = False
+    output_file: str
+
+
 class AgentRequest(BaseModel):
     """One agent invocation.
 
@@ -28,6 +44,10 @@ class AgentRequest(BaseModel):
     agent_key: str
     query: str
     history: list[ModelMessage] = Field(default_factory=list)
+    # Populated only for agents whose call signature needs structured
+    # params beyond `query` — currently just ILA. None for any agent
+    # that doesn't need this (e.g. FakeAgentAdapter).
+    ila_params: ILAGenerateParams | None = None
     # Opaque, per-user/session identifiers an adapter may want (e.g.
     # to scope a workspace) — never assumed to mean anything specific
     # by AgentRegistry/ConversationService.

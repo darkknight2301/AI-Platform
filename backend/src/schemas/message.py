@@ -7,12 +7,21 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from src.agent_layer.schemas import ILAGenerateParams
 from src.models.enums import MessageRole
 
 
 class SendMessageRequest(BaseModel):
     content: str = Field(min_length=1)
     stream: bool = False
+    # Only used when the chat is agent-backed (chat.agent_key set) AND
+    # that agent needs structured parameters beyond plain text — ILA's
+    # fixed generate() signature does (see agent_layer/adapters/ila_adapter.py).
+    # Ignored for ordinary model-backed chats. Missing on an ILA chat
+    # is a validation error at send time (ConversationService), not a
+    # guessed default — these values are task-specific and guessing
+    # wrong ones (output_file especially) would be worse than asking.
+    ila: ILAGenerateParams | None = None
 
 
 class EditMessageRequest(BaseModel):
