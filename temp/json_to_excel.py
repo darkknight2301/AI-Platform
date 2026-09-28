@@ -3,35 +3,37 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.chart import BarChart, Reference
 from openpyxl.utils import get_column_letter
 
-# Sample JSON data mirroring the structure
-json_data = [
-    {
+# Updated JSON data structure as a dictionary of dictionaries
+json_data = {
+    "C101": {
         "case_id": 101,
         "title": "Verify Login Functionality",
         "assignedto_id": "John Doe",
         "defects": "DEF-001",
-        "environment": "Staging",
+        "environment": "PyATE",
         "section_hierarchy": "Authentication > Login",
         "status0": "Fail",
         "comment0": "Password field throws 500 error.",
-        "status1": "Pass",
+        "status1": "passed",
         "comment1": "Fixed in patch v1.1."
     },
-    {
+    "C102": {
         "case_id": 102,
         "title": "Verify Logout Flow",
         "assignedto_id": "Jane Smith",
         "defects": "",
-        "environment": "Production",
+        "environment": "CommonTP",
         "section_hierarchy": "Authentication > Logout",
         "status0": "Pass",
         "comment0": "Session cleared successfully.",
-        "status1": "Fail",
+        "status1": "retest",
         "comment1": "Cookie persistent on some browsers."
     }
-]
+}
 
-def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
+def json_to_excel_with_summary(json_dict, output_file="summary_report.xlsx"):
+    # Convert dictionary values to a list for iteration
+    data = list(json_dict.values())
     wb = openpyxl.Workbook()
 
     # ==========================================
@@ -40,7 +42,7 @@ def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
     ws1 = wb.active
     ws1.title = "Json to Excel"
 
-    # 1. Identify all dynamic status/comment pairs across all records
+    # Identify all dynamic status/comment pairs across all records
     max_status_index = -1
     for item in data:
         for key in item.keys():
@@ -49,43 +51,42 @@ def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
                 if idx > max_status_index:
                     max_status_index = idx
 
-    # 2. Define Base Headers & Dynamic Status Headers
+    # Define Base Headers, Latest Status/Comment (right after Section Hierarchy), & Historical Status Headers
     headers = [
         "Case ID", "Title", "Assigned To ID", "Defects", 
-        "Environment", "Section Hierarchy"
+        "Environment", "Section Hierarchy", "Latest Status", "Latest Comment"
     ]
     
     # Add historical status columns dynamically
-    for i in range(max_status_index):
+    for i in range(max_status_index + 1):
         headers.extend([f"Status {i}", f"Comment {i}"])
         
-    # Append the Latest Status columns to the end
-    headers.extend(["Latest Status", "Latest Comment"])
     ws1.append(headers)
     
-    # 3. Populate Rows
+    # Populate Rows
     for item in data:
+        # Extract highest indexed status ("Latest")
+        latest_status = item.get(f"status{max_status_index}", "") if max_status_index >= 0 else ""
+        latest_comment = item.get(f"comment{max_status_index}", "") if max_status_index >= 0 else ""
+
         row = [
             item.get("case_id", ""),
             item.get("title", ""),
             item.get("assignedto_id", ""),
             item.get("defects", ""),
             item.get("environment", ""),
-            item.get("section_hierarchy", "")
+            item.get("section_hierarchy", ""),
+            latest_status,
+            latest_comment
         ]
         
         # Populate historical status pairs
-        for i in range(max_status_index):
+        for i in range(max_status_index + 1):
             row.extend([item.get(f"status{i}", ""), item.get(f"comment{i}", "")])
             
-        # Extract the highest indexed status ("Latest")
-        latest_status = item.get(f"status{max_status_index}", "")
-        latest_comment = item.get(f"comment{max_status_index}", "")
-        
-        row.extend([latest_status, latest_comment])
         ws1.append(row)
         
-    # 4. Styling and Formatting for Sheet 1
+    # Styling and Formatting for Sheet 1
     header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     center_align = Alignment(horizontal="center", vertical="center")
@@ -141,14 +142,15 @@ def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
         cell.fill = header_fill
         cell.alignment = center_align
 
-    statuses = ["Pass", "Fail", "Blocked", "Not Run"]
-    last_row_data = len(data) + 1  # Header is row 1, data rows follow
-    latest_col_letter = get_column_letter(len(headers) - 1)
+    statuses = ["passed", "retest", "untested"]
+    last_row_data = len(data) + 1
+    # Latest Status is column G (7th column)
+    latest_col_letter = get_column_letter(7)
 
     for idx, status in enumerate(statuses, 6):
         ws2.cell(row=idx, column=1, value=status).alignment = left_align
         
-        # Dynamic COUNTIF formula referencing Sheet 1
+        # Dynamic COUNTIF formula referencing Sheet 1 Latest Status column
         count_formula = f"=COUNTIF('Json to Excel'!${latest_col_letter}$2:${latest_col_letter}${last_row_data}, A{idx})"
         ws2.cell(row=idx, column=2, value=count_formula).alignment = center_align
         
@@ -170,7 +172,7 @@ def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
     ws2.cell(row=total_row, column=3).number_format = '0.0%'
     ws2.cell(row=total_row, column=3).alignment = center_align
 
-    # Summary Table 2: Environment Breakdown
+    # Summary Table 2: Environment Breakdown (PyATE & CommonTP)
     ws2["E4"] = "Environment Breakdown"
     ws2["E4"].font = Font(name="Segoe UI", size=12, bold=True, color="1F4E78")
 
@@ -182,7 +184,7 @@ def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
         cell.fill = header_fill
         cell.alignment = center_align
 
-    envs = ["Staging", "Production", "Development", "UAT"]
+    envs = ["PyATE", "CommonTP"]
     for idx, env in enumerate(envs, 6):
         ws2.cell(row=idx, column=5, value=env).alignment = left_align
         env_count_formula = f"=COUNTIF('Json to Excel'!$E$2:$E${last_row_data}, E{idx})"
@@ -190,10 +192,10 @@ def json_to_excel_with_summary(data, output_file="summary_report.xlsx"):
         for c in range(5, 7):
             ws2.cell(row=idx, column=c).font = Font(name="Segoe UI", size=10)
 
-    # Environment Total Row
-    ws2.cell(row=total_row, column=5, value="Total").font = Font(name="Segoe UI", size=10, bold=True)
-    ws2.cell(row=total_row, column=6, value=f"=SUM(F6:F{total_row-1})").font = Font(name="Segoe UI", size=10, bold=True)
-    ws2.cell(row=total_row, column=6).alignment = center_align
+    env_total_row = 6 + len(envs)
+    ws2.cell(row=env_total_row, column=5, value="Total").font = Font(name="Segoe UI", size=10, bold=True)
+    ws2.cell(row=env_total_row, column=6, value=f"=SUM(F6:F{env_total_row-1})").font = Font(name="Segoe UI", size=10, bold=True)
+    ws2.cell(row=env_total_row, column=6).alignment = center_align
 
     # Add Bar Chart for Status Breakdown
     chart = BarChart()
