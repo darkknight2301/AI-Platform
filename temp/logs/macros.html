@@ -1,0 +1,77 @@
+{# Shared building blocks used by suite.html and regression.html #}
+{% macro badge(s) %}<span class="badge {{ s }}">{{ LABEL[s] }}</span>{% endmacro %}
+
+{% macro dashboard(title, subtitle, counts, total, pie) %}
+<header class="dash">
+  <div class="dash-top">
+    <div><h1>{{ title }}</h1><div class="sub">{{ subtitle }}<br>Generated {{ generated }}</div></div>
+    <div class="cards">
+      <div class="mcard"><b>{{ total }}</b><span>Executions</span></div>
+      {% for s in STATUSES if counts.get(s) or s in ('passed', 'failed', 'error') %}
+      <div class="mcard" style="border-left-color:#{{ COLOR[s] }}"><b>{{ counts.get(s, 0) }}</b><span>{{ LABEL[s] }}</span></div>
+      {% endfor %}
+      <div class="mcard"><b>{{ "%.1f"|format(counts.get('passed', 0) * 100 / total if total else 0) }}%</b><span>Pass rate</span></div>
+    </div>
+    <div class="pie">
+      <svg viewBox="0 0 42 42">{% for p in pie %}<circle r="15.9155" cx="21" cy="21" fill="none" stroke="#{{ p.color }}" stroke-width="6" stroke-dasharray="{{ p.dash }} {{ p.gap }}" stroke-dashoffset="{{ p.offset }}"><title>{{ p.tip }}</title></circle>{% endfor %}
+      <text x="21" y="22.5" text-anchor="middle" font-size="7" font-weight="700" fill="currentColor">{{ total }}</text></svg>
+      <div class="legend">{% for s in STATUSES if counts.get(s) %}<div><span class="dot" style="background:#{{ COLOR[s] }}"></span>{{ LABEL[s] }}: {{ counts[s] }}</div>{% endfor %}</div>
+    </div>
+  </div>
+  <div class="toolbar">
+    <button class="on" data-st="all">All</button>
+    {% for s in STATUSES if counts.get(s) %}<button data-st="{{ s }}">{{ LABEL[s] }}</button>{% endfor %}
+    <input id="q" placeholder="Search case / name / IP / marker">
+    <button id="exp">Expand all</button><button id="col">Collapse all</button>
+  </div>
+</header>
+{% endmacro %}
+
+{# The 4 dropdown sections of one log. A .zip is not opened: only a note is shown. #}
+{% macro logs(r) %}
+{% if r.is_zip %}
+<details class="sec"><summary>Logs</summary><div class="body"><p class="muted"><b>{{ r.file_name }}</b> &mdash; zip not supported. Only information from the summary/details JSON is shown.</p></div></details>
+{% else %}
+{% set bad = r.status in ('failed', 'error') %}
+<details class="sec"><summary>Header Metadata</summary><div class="body"><table class="kv">
+  {% for k, v in r.header.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}
+  <tr><th>Log file</th><td>{{ r.file }}</td></tr>
+  {% if r.test_file %}<tr><th>Test file</th><td>{{ r.test_file }}</td></tr>{% endif %}
+  {% if r.function %}<tr><th>Function name</th><td>{{ r.function }}</td></tr>{% endif %}
+</table></div></details>
+{% if r.failure is not none or bad %}
+<details class="sec fail"{% if bad %} open{% endif %}><summary>Failure Reason</summary><div class="body">
+  {% if r.failure %}<pre class="failure">{{ r.failure }}</pre>{% else %}<p class="muted">No failure block found in this log.</p>{% endif %}
+</div></details>
+{% endif %}
+{% if r.compilation %}<details class="sec"><summary>Compilation Log</summary><div class="body"><pre class="term">{{ r.compilation }}</pre></div></details>{% endif %}
+{% if r.execution %}<details class="sec"{% if bad %} open{% endif %}><summary>Execution Log</summary><div class="body"><pre class="term">{{ r.execution }}</pre></div></details>{% endif %}
+{% endif %}
+{% endmacro %}
+
+{# collapse=True (regression): passed/other runs hide their logs behind one dropdown, failed/error stay expanded #}
+{% macro run_block(r, label, collapse) %}
+<div class="run">
+  <div class="run-head">{{ badge(r.status) }}<span class="ip">{{ r.ip }}</span><span class="muted">{{ label }}</span><span>&#9201; {{ r.duration|dur }}</span></div>
+  {% if collapse and r.status not in ('failed', 'error') %}
+  <details class="sec lazy"><summary>Show raw logs</summary><div class="body">{{ logs(r) }}</div></details>
+  {% else %}{{ logs(r) }}{% endif %}
+</div>
+{% endmacro %}
+
+{% macro case_card(cid, recs, collapse, labels) %}
+{% set sts = recs|map(attribute='status')|list %}
+{% set worst = (WORST|select('in', sts)|list)|first %}
+<article class="case st-{{ worst }}" id="case-{{ cid }}" data-statuses="{{ sts|unique|join(' ') }}"
+         data-search="{{ (cid ~ ' ' ~ recs[0].name ~ ' ' ~ recs|map(attribute='ip')|join(' ') ~ ' ' ~ recs[0].markers|join(' '))|lower }}">
+  <div class="case-head">{{ badge(worst) }}<span class="cid">{{ cid }}</span><span class="cname">{{ recs[0].name }}</span>
+    {% if recs|length > 1 %}<span class="muted">{% for s in STATUSES if sts.count(s) %}{{ LABEL[s] }} &times;{{ sts.count(s) }} {% endfor %}</span>{% endif %}
+    {% for m in recs[0].markers %}<span class="chip">{{ m }}</span>{% endfor %}</div>
+  {% for r in recs %}{{ run_block(r, labels.get(r.run_key, ''), collapse) }}{% endfor %}
+</article>
+{% endmacro %}
+
+{% macro zip_list(zips) %}
+{% if zips %}<details class="sec"><summary>Zip files found in folder ({{ zips|length }}) &mdash; zip not supported</summary><div class="body">
+  <ul>{% for z in zips %}<li>{{ z }}</li>{% endfor %}</ul></div></details>{% endif %}
+{% endmacro %}

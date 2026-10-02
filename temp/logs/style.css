@@ -1,0 +1,45 @@
+:root{--bg:#f4f6f9;--card:#fff;--fg:#1f2933;--muted:#6b7785;--line:#e3e8ee;--accent:#2f5bea;
+--passed:#2e9e5b;--failed:#d64545;--error:#e08a1e;--pending:#d4b106;--skipped:#8c959f;--nan:#b8c0cc}
+@media (prefers-color-scheme:dark){:root{--bg:#12161c;--card:#1b222b;--fg:#e6ebf1;--muted:#93a0af;--line:#2b3542}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1250px;margin:18px auto;padding:0 16px}
+h2{font-size:16px;margin:26px 0 8px}
+.muted{color:var(--muted)}
+/* sticky dashboard */
+.dash{position:sticky;top:0;z-index:20;background:var(--card);border-bottom:1px solid var(--line);box-shadow:0 2px 6px rgba(0,0,0,.08);padding:10px 20px}
+.dash-top{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.dash h1{margin:0;font-size:18px}.sub{color:var(--muted);font-size:12px;word-break:break-all}
+.cards{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+.mcard{background:var(--bg);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;padding:4px 12px;min-width:84px}
+.mcard b{display:block;font-size:20px;line-height:1.2}.mcard span{font-size:11px;color:var(--muted);text-transform:uppercase}
+.pie{display:flex;align-items:center;gap:10px}.pie svg{width:96px;height:96px}
+.legend{font-size:12px;line-height:1.6}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+.toolbar{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.toolbar button,.toolbar input{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:5px;padding:4px 10px;font:inherit;cursor:pointer}
+.toolbar button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.toolbar input{cursor:text;min-width:220px}
+/* badges, tables */
+.badge{display:inline-block;padding:1px 9px;border-radius:10px;color:#fff;font-size:12px;font-weight:600}
+.badge.passed{background:var(--passed)}.badge.failed{background:var(--failed)}.badge.error{background:var(--error)}
+.badge.pending{background:var(--pending)}.badge.skipped{background:var(--skipped)}.badge.nan{background:var(--nan);color:#333}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow-x:auto}
+table{border-collapse:collapse;width:100%}th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--bg);font-size:12px;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+table.kv th{width:210px;text-transform:none;font-size:13px;background:transparent}table.kv td{word-break:break-all}
+.mx td,.mx th{text-align:center;white-space:nowrap}.mx td:first-child,.mx th:first-child{text-align:left}
+.ip,.cid{font-family:ui-monospace,Consolas,monospace}.cid{font-weight:700}.cname{font-weight:600}
+/* case cards */
+.case{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--nan);border-radius:8px;margin:10px 0;padding:10px 14px}
+.case.st-passed{border-left-color:var(--passed)}.case.st-failed{border-left-color:var(--failed)}
+.case.st-error{border-left-color:var(--error)}.case.st-pending{border-left-color:var(--pending)}.case.st-skipped{border-left-color:var(--skipped)}
+.case-head,.run-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px}
+.run{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+details.sec{border:1px solid var(--line);border-radius:6px;margin:5px 0;background:var(--card)}
+details.sec>summary{cursor:pointer;padding:5px 10px;font-weight:600;background:var(--bg);border-radius:6px}
+details.sec .body{padding:8px 10px}details.fail>summary{color:var(--failed)}details.lazy>summary{font-weight:500;color:var(--muted)}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 ui-monospace,Consolas,monospace;max-height:520px;overflow:auto;padding:10px;border-radius:4px}
+pre.term{background:#0f1720;color:#d5dde6}pre.failure{background:#fff0f0;color:#8c1d1d;border:1px solid #f3c1c1}
+.l-fail{color:#ff6b6b;font-weight:600}.l-ok{color:#4cd08a}.l-run{color:#6cb6ff}.l-dim{color:#7b8794}
+footer{color:var(--muted);font-size:12px;text-align:center;margin:30px 0}
