@@ -67,6 +67,7 @@ def build_runs(summary, recs):
 
 # ================================================================== Excel helpers
 def autofit(ws, cap=60):
+    """Set each column width to its longest cell value (capped) so tables are readable."""
     widths = {}
     for row in ws.iter_rows():
         for c in row:
@@ -77,6 +78,7 @@ def autofit(ws, cap=60):
 
 
 def status_colors(ws, rng):
+    """Add conditional formatting that fills status cells (Passed, Failed, NAN ...) with soft colours."""
     for text, color in SOFT.items():
         ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=['"%s"' % text],
                                                       fill=PatternFill("solid", start_color=color, end_color=color)))
@@ -92,6 +94,7 @@ def as_table(ws, name):
 
 
 def link_column(ws, header):
+    """Turn the file paths in the column with this header into clickable links to the files."""
     col = [c.value for c in ws[1]].index(header) + 1
     for row in range(2, ws.max_row + 1):
         cell = ws.cell(row=row, column=col)
@@ -286,6 +289,7 @@ def sheet_dashboard(xw, df, folder):
                 ws.cell(row=r, column=cc).alignment = Alignment(horizontal="center", vertical="center")
 
     def chart(name, title, anchor, kind="col", stacked=False, colors=None):
+        """Add one chart (pie / column / bar) that reads a table from 'Dashboard Data' onto the Dashboard sheet."""
         c0, n, nc = pos[name]
         if n == 0:
             return
@@ -336,6 +340,7 @@ def sheet_dashboard(xw, df, folder):
 
 # ================================================================== main
 def main():
+    """Parse arguments, read the regression JSON + logs, then write the HTML report and the Excel workbook."""
     ap = argparse.ArgumentParser(description="Regression log folder -> regression_report.html + summary_report.xlsx")
     ap.add_argument("folder")
     ap.add_argument("-o", "--output-dir", help="default: the input folder")

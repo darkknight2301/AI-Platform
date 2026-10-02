@@ -46,6 +46,7 @@ def case_id_of(text):
 
 
 def parse_ts(s):
+    """Parse 'DD-mm-YYYY_HH-MM-SS' into a datetime; return None if the text is not in that format."""
     try:
         return datetime.strptime(s.strip(), TS_FMT)
     except (ValueError, AttributeError):
@@ -53,6 +54,7 @@ def parse_ts(s):
 
 
 def to_float(v):
+    """Convert a JSON value (e.g. duration in seconds) to float; return None if it is missing or invalid."""
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -66,10 +68,12 @@ def header_ip(header):
 
 
 def fmt_ts(ts):
+    """Format a datetime as 'DD-mm-YYYY HH:MM:SS' for display; 'n/a' when there is no timestamp."""
     return ts.strftime("%d-%m-%Y %H:%M:%S") if ts else "n/a"
 
 
 def fmt_dur(sec):
+    """Format seconds as '12.34 s' or '2m 05s' for display; '-' when the duration is unknown."""
     if sec is None or sec != sec:          # None or NaN
         return "-"
     return "%.2f s" % sec if sec < 60 else "%dm %02ds" % (sec // 60, sec % 60)
@@ -110,6 +114,7 @@ def parse_log(path):
 
 
 def clip(text):
+    """Shorten a long log section to its first and last MAX_LOG_LINES/2 lines so the HTML stays light."""
     lines = text.split("\n")
     if len(lines) <= MAX_LOG_LINES:
         return text
@@ -119,6 +124,7 @@ def clip(text):
 
 
 def highlight(text):
+    """Escape an execution log and colour the gtest RUN/OK/FAILED lines; returns safe HTML for the template."""
     out = []
     for line in clip(text).split("\n"):
         s, cls = line.lstrip(), ""
@@ -175,6 +181,7 @@ def build_records(folder, details, summary_status):
 
 
 def group_cases(recs):
+    """Group records by case id, keeping first-seen order -> [(case_id, [records])]."""
     cases = OrderedDict()
     for r in recs:
         cases.setdefault(r["case_id"], []).append(r)
@@ -196,6 +203,7 @@ def pie_segments(counts, total):
 
 
 def render(template, out_path, **ctx):
+    """Render a Jinja template (CSS/JS inlined) from the templates folder and write the HTML file."""
     env = Environment(loader=FileSystemLoader(str(HERE / "templates")), autoescape=True)
     env.globals.update(STATUSES=STATUSES, WORST=WORST, LABEL=LABEL, COLOR=COLOR)
     env.filters.update(dur=fmt_dur, ts=fmt_ts)

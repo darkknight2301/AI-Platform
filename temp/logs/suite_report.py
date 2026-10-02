@@ -16,6 +16,7 @@ from common import (build_records, case_id_of, details_by_case, group_cases, loa
 
 
 def main():
+    """Parse arguments, read the suite JSON + logs, order the cases by execution_order and write report.html."""
     ap = argparse.ArgumentParser(description="Single-suite log folder -> report.html")
     ap.add_argument("folder")
     ap.add_argument("-o", "--output-dir", help="default: the input folder")
