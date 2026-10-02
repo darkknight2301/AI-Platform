@@ -30,15 +30,18 @@
 {# The 4 dropdown sections of one log. A .zip is not opened: only a note is shown. #}
 {% macro logs(r) %}
 {% if r.is_zip %}
-<details class="sec"><summary>Logs</summary><div class="body"><p class="muted"><b>{{ r.file_name }}</b> &mdash; zip not supported. Only information from the summary/details JSON is shown.</p></div></details>
+<details class="sec"><summary>Logs</summary><div class="body"><p class="muted"><b>{{ r.log_file_name }}</b> &mdash; zip not supported. Only information from the summary/details JSON is shown.</p></div></details>
 {% else %}
 {% set bad = r.status in ('failed', 'error') %}
 <details class="sec"><summary>Header Metadata</summary><div class="body"><table class="kv">
   {% for k, v in r.header.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}
-  <tr><th>Log file</th><td>{{ r.file }}</td></tr>
-  {% if r.test_file %}<tr><th>Test file</th><td>{{ r.test_file }}</td></tr>{% endif %}
-  {% if r.function %}<tr><th>Function name</th><td>{{ r.function }}</td></tr>{% endif %}
+  <tr><th>Log file</th><td>{{ r.log_path }}</td></tr>
+  {% if r.test_file_path %}<tr><th>Test file</th><td>{{ r.test_file_path }}</td></tr>{% endif %}
+  {% if r.function_name %}<tr><th>Function name</th><td>{{ r.function_name }}</td></tr>{% endif %}
 </table></div></details>
+{% if not r.log_embedded %}
+<p class="muted">Log not embedded to keep this page light &mdash; <a href="{{ r.log_uri }}">open {{ r.log_file_name }}</a></p>
+{% else %}
 {% if r.failure is not none or bad %}
 <details class="sec fail"{% if bad %} open{% endif %}><summary>Failure Reason</summary><div class="body">
   {% if r.failure %}<pre class="failure">{{ r.failure }}</pre>{% else %}<p class="muted">No failure block found in this log.</p>{% endif %}
@@ -47,14 +50,15 @@
 {% if r.compilation %}<details class="sec"><summary>Compilation Log</summary><div class="body"><pre class="term">{{ r.compilation }}</pre></div></details>{% endif %}
 {% if r.execution %}<details class="sec"{% if bad %} open{% endif %}><summary>Execution Log</summary><div class="body"><pre class="term">{{ r.execution }}</pre></div></details>{% endif %}
 {% endif %}
+{% endif %}
 {% endmacro %}
 
 {# collapse=True (regression): passed/other runs hide their logs behind one dropdown, failed/error stay expanded #}
 {% macro run_block(r, label, collapse) %}
 <div class="run">
-  <div class="run-head">{{ badge(r.status) }}<span class="ip">{{ r.ip }}</span><span class="muted">{{ label }}</span><span>&#9201; {{ r.duration|dur }}</span></div>
+  <div class="run-head">{{ badge(r.status) }}<span class="ip">{{ r.setup_ip }}</span><span class="muted">{{ label }}</span><span>&#9201; {{ r.duration_sec|dur }}</span></div>
   {% if collapse and r.status not in ('failed', 'error') %}
-  <details class="sec lazy"><summary>Show raw logs</summary><div class="body">{{ logs(r) }}</div></details>
+  <details class="sec lazy"><summary>{% if r.is_zip %}Show zip note{% elif r.log_embedded %}Show raw logs{% else %}Show header and log link{% endif %}</summary><div class="body">{{ logs(r) }}</div></details>
   {% else %}{{ logs(r) }}{% endif %}
 </div>
 {% endmacro %}
@@ -63,8 +67,8 @@
 {% set sts = recs|map(attribute='status')|list %}
 {% set worst = (WORST|select('in', sts)|list)|first %}
 <article class="case st-{{ worst }}" id="case-{{ cid }}" data-statuses="{{ sts|unique|join(' ') }}"
-         data-search="{{ (cid ~ ' ' ~ recs[0].name ~ ' ' ~ recs|map(attribute='ip')|join(' ') ~ ' ' ~ recs[0].markers|join(' '))|lower }}">
-  <div class="case-head">{{ badge(worst) }}<span class="cid">{{ cid }}</span><span class="cname">{{ recs[0].name }}</span>
+         data-search="{{ (cid ~ ' ' ~ recs[0].test_name ~ ' ' ~ recs|map(attribute='setup_ip')|join(' ') ~ ' ' ~ recs[0].markers|join(' '))|lower }}">
+  <div class="case-head">{{ badge(worst) }}<span class="cid">{{ cid }}</span><span class="cname">{{ recs[0].test_name }}</span>
     {% if recs|length > 1 %}<span class="muted">{% for s in STATUSES if sts.count(s) %}{{ LABEL[s] }} &times;{{ sts.count(s) }} {% endfor %}</span>{% endif %}
     {% for m in recs[0].markers %}<span class="chip">{{ m }}</span>{% endfor %}</div>
   {% for r in recs %}{{ run_block(r, labels.get(r.run_key, ''), collapse) }}{% endfor %}
