@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+logs/
+data/reminders.json
+data/history.json
+data/*.corrupt-*
+data/*.tmp

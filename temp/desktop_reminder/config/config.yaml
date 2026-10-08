@@ -1,0 +1,17 @@
+# Desktop Reminder configuration. Edit while the app is closed, or use the Settings tab.
+application:
+  character_position: bottom_right   # bottom_right | bottom_left | bottom_center
+  default_character: default_character
+  monitor: cursor                    # cursor = screen under the mouse | primary
+  start_with_windows: false
+  sound_enabled: true
+
+animation:
+  enter_duration: 1.5                # seconds to walk on screen
+  exit_duration: 1.5                 # seconds to walk away
+  reaction_duration: 1.8             # happy / angry animation length
+
+reminder:
+  default_snooze_minutes: 10
+  missed_grace_minutes: 30           # overdue longer than this => logged as "missed", not shown
+  auto_snooze_after_seconds: 0       # 0 = wait for the user indefinitely
