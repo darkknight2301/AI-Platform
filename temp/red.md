@@ -21,7 +21,7 @@ Build a secure, fully on-premises AI assistant platform that helps our test and 
 | Automation Agent | Turns a test sequence into runnable Pytest + pynvme code, runs it and fixes errors | Faster test development |
 | Failure Analysis Agent | Classifies regression failures as script or firmware issue, fixes scripts, narrows down firmware issues | Faster release sign-off |
 
-Users work from a Linux terminal interface, similar in style to Claude Code.
+Users work from a Linux command-line tool first; a richer interactive terminal interface, similar in style to Claude Code, follows later.
 
 ## 4. Where we start: the earlier POC (ILA Agent)
 
@@ -73,7 +73,7 @@ Hardware is requested only after the experiment phase shows which model size is 
 |-------|-------------|------------------|
 | 0 | Design and approval | This document approved |
 | 1a | Technical Agent backend, three approaches benchmarked | Accuracy and no-hallucination targets met |
-| 1b | Terminal UI, LDAP, pilot with one team | Security review passed |
+| 1b | Command-line tool (argparse), Docker deployment, LDAP, pilot with one team | Security review passed |
 | 2 | Finder Analyser (TestRail, Redmine) | Pilot feedback |
 | 3 | Automation Agent (Pytest + pynvme) | Code runs on benchmark tests |
 | 4 | Failure Analysis Agent | Classification accuracy |
