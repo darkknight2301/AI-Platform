@@ -76,6 +76,8 @@ Open the file in any browser. It works offline and follows your light/dark mode.
 - Cards: total executions, count per status, pass rate
 - Donut chart of the status split (hover for numbers)
 - Filter buttons by status, a search box, and Expand all / Collapse all
+- Theme button (right side of the toolbar): switch dark / light. It starts with your
+  system theme and remembers your choice in the browser
 
 **Search** matches case id, test name, setup IP and markers.
 
