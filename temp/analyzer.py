@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
 """
-Repository analyzer and skeleton generator.
+Repository metadata analyzer and Python skeleton generator.
 
-Analyzes .py and .json files and writes one metadata JSON file.
-Can then recreate a lightweight repository skeleton from that metadata.
+Compatible with Python 3.8. Uses only the standard library.
 
-Python: 3.8+
-No third-party dependencies.
-
-Examples:
-    # Analyze a repository
-    python repo_meta.py analyze /path/to/repo --output repo_meta.json
-
-    # Recreate the skeleton from metadata
-    python repo_meta.py generate repo_meta.json --output-dir ./generated_repo
-
-    # Analyze and generate in one command
-    python repo_meta.py roundtrip /path/to/repo --meta repo_meta.json \
+Commands:
+    python3.8 repo_meta.py analyze /path/to/repo --output repository_meta.json
+    python3.8 repo_meta.py generate repository_meta.json --output-dir ./generated_repo
+    python3.8 repo_meta.py roundtrip /path/to/repo --meta repository_meta.json \
         --output-dir ./generated_repo
-"""
 
-from __future__ import annotations
+Behavior:
+- Recursively scans .py and .json files.
+- Extracts Python imports, classes, methods, functions, annotations, defaults,
+  decorators, docstrings, and simple variables.
+- Stores JSON file paths and names only; original JSON content is not read.
+- Generates Python interface skeletons and empty JSON objects.
+- Rejects unsafe paths in metadata and does not overwrite files unless requested.
+"""
 
 import argparse
 import ast
@@ -28,182 +25,234 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 
 METADATA_VERSION = 1
-SUPPORTED_SUFFIXES = {".py", ".json"}
+SUPPORTED_SUFFIXES = (".py", ".json")
 IGNORED_DIRS = {
     ".git", ".hg", ".svn", ".venv", "venv", "env", "__pycache__",
     ".mypy_cache", ".pytest_cache", ".tox", "node_modules", "dist", "build",
 }
 
 
-def safe_relative_path(path: Path, root: Path) -> str:
-    """Return a POSIX relative path and reject paths outside the repository."""
-    resolved_path = path.resolve()
-    resolved_root = root.resolve()
-    try:
-        return resolved_path.relative_to(resolved_root).as_posix()
-    except ValueError as exc:
-        raise ValueError(f"Path {path} is outside repository root {root}") from exc
+# ---------- AST rendering (Python 3.8; no ast.unparse dependency) ----------
 
-
-def unparse_node(node: ast.AST) -> str:
-    """Render an AST node; use astunparse as an optional Python 3.8 fallback."""
-    unparse = getattr(ast, "unparse", None)
-    if unparse is not None:
-        return unparse(node)
-    try:
-        import astunparse
-        return astunparse.unparse(node).strip()
-    except ImportError:
-        # Minimal fallback for common names and annotations.
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Constant):
-            return repr(node.value)
-        if isinstance(node, ast.Attribute):
-            return unparse_node(node.value) + "." + node.attr
-        if isinstance(node, ast.Subscript):
-            return unparse_node(node.value) + "[" + unparse_node(node.slice) + "]"
-        if hasattr(ast, "Index") and isinstance(node, ast.Index):
-            return unparse_node(node.value)
-        if isinstance(node, ast.Tuple):
-            return ", ".join(unparse_node(item) for item in node.elts)
-        if isinstance(node, ast.List):
-            return "[" + ", ".join(unparse_node(item) for item in node.elts) + "]"
-        if isinstance(node, ast.Call):
-            args = [unparse_node(arg) for arg in node.args]
-            args.extend((kw.arg + "=" if kw.arg else "**") + unparse_node(kw.value) for kw in node.keywords)
-            return unparse_node(node.func) + "(" + ", ".join(args) + ")"
-        if isinstance(node, ast.JoinedStr):
-            # Reconstruct f-strings on Python 3.8 when astunparse is unavailable.
-            pieces = []
-            for value in node.values:
-                if isinstance(value, ast.Str):
-                    literal = value.s
-                    pieces.append(literal.replace("{", "{{").replace("}", "}}"))
-                elif isinstance(value, ast.Constant) and isinstance(value.value, str):
-                    literal = value.value
-                    pieces.append(literal.replace("{", "{{").replace("}", "}}"))
-                elif isinstance(value, ast.FormattedValue):
-                    expression = unparse_node(value.value)
-                    if value.conversion == ord("s"):
-                        expression += "!s"
-                    elif value.conversion == ord("r"):
-                        expression += "!r"
-                    elif value.conversion == ord("a"):
-                        expression += "!a"
-                    if value.format_spec is not None:
-                        spec = value.format_spec
-                        if isinstance(spec, ast.JoinedStr):
-                            spec_text = "".join(
-                                part.s if isinstance(part, ast.Str)
-                                else unparse_node(part.value) if isinstance(part, ast.FormattedValue)
-                                else str(getattr(part, "value", ""))
-                                for part in spec.values
-                            )
-                        else:
-                            spec_text = unparse_node(spec)
-                        expression += ":" + spec_text
-                    pieces.append("{" + expression + "}")
-                else:
-                    raise ValueError("Unsupported f-string component: " + type(value).__name__)
-            return "f" + repr("".join(pieces))
-        if isinstance(node, ast.FormattedValue):
-            return "{" + unparse_node(node.value) + "}"
-        if isinstance(node, ast.BinOp):
-            operators = {
-                ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/",
-                ast.FloorDiv: "//", ast.Mod: "%", ast.Pow: "**",
-                ast.BitOr: "|", ast.BitAnd: "&", ast.BitXor: "^",
-            }
-            operator = operators.get(type(node.op))
-            if operator:
-                return unparse_node(node.left) + " " + operator + " " + unparse_node(node.right)
-        raise ValueError("Cannot render AST node without astunparse: " + type(node).__name__)
-
-
-def annotation_to_text(node: Optional[ast.AST]) -> Optional[str]:
-    """Convert an annotation AST node to readable source text."""
+def render_ast(node):
+    """Render common Python AST nodes without ast.unparse (Python 3.8)."""
     if node is None:
         return None
-    try:
-        return unparse_node(node)
-    except Exception:
-        return None
+
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Constant):
+        return repr(node.value)
+    if isinstance(node, ast.Str):  # Python 3.8 string literal
+        return repr(node.s)
+    if isinstance(node, ast.Num):  # Python 3.8 numeric literal
+        return repr(node.n)
+    if isinstance(node, ast.Bytes):
+        return repr(node.s)
+    if isinstance(node, ast.NameConstant):
+        return repr(node.value)
+    if isinstance(node, ast.Attribute):
+        return render_ast(node.value) + "." + node.attr
+    if isinstance(node, ast.Subscript):
+        return render_ast(node.value) + "[" + render_ast(node.slice) + "]"
+    if isinstance(node, ast.Index):  # Python 3.8
+        return render_ast(node.value)
+    if isinstance(node, ast.Slice):
+        lower = render_ast(node.lower) if node.lower is not None else ""
+        upper = render_ast(node.upper) if node.upper is not None else ""
+        step = render_ast(node.step) if node.step is not None else ""
+        result = lower + ":" + upper
+        if node.step is not None:
+            result += ":" + step
+        return result
+    if isinstance(node, ast.Tuple):
+        values = ", ".join(render_ast(item) for item in node.elts)
+        if len(node.elts) == 1:
+            values += ","
+        return "(" + values + ")"
+    if isinstance(node, ast.List):
+        return "[" + ", ".join(render_ast(item) for item in node.elts) + "]"
+    if isinstance(node, ast.Set):
+        return "{" + ", ".join(render_ast(item) for item in node.elts) + "}"
+    if isinstance(node, ast.Dict):
+        pairs = []
+        for key, value in zip(node.keys, node.values):
+            key_text = render_ast(key) if key is not None else "**"
+            if key is None:
+                pairs.append("**" + render_ast(value))
+            else:
+                pairs.append(key_text + ": " + render_ast(value))
+        return "{" + ", ".join(pairs) + "}"
+    if isinstance(node, ast.UnaryOp):
+        operators = {
+            ast.UAdd: "+", ast.USub: "-", ast.Not: "not ",
+            ast.Invert: "~",
+        }
+        return operators.get(type(node.op), "") + render_ast(node.operand)
+    if isinstance(node, ast.BinOp):
+        operators = {
+            ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/",
+            ast.FloorDiv: "//", ast.Mod: "%", ast.Pow: "**",
+            ast.BitAnd: "&", ast.BitOr: "|", ast.BitXor: "^",
+            ast.LShift: "<<", ast.RShift: ">>", ast.MatMult: "@",
+        }
+        return render_ast(node.left) + " " + operators.get(type(node.op), "?") + " " + render_ast(node.right)
+    if isinstance(node, ast.BoolOp):
+        operator = " and " if isinstance(node.op, ast.And) else " or "
+        return operator.join(render_ast(value) for value in node.values)
+    if isinstance(node, ast.Compare):
+        operators = {
+            ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<", ast.LtE: "<=",
+            ast.Gt: ">", ast.GtE: ">=", ast.Is: "is", ast.IsNot: "is not",
+            ast.In: "in", ast.NotIn: "not in",
+        }
+        pieces = [render_ast(node.left)]
+        for op, comparator in zip(node.ops, node.comparators):
+            pieces.append(operators.get(type(op), "?"))
+            pieces.append(render_ast(comparator))
+        return " ".join(pieces)
+    if isinstance(node, ast.IfExp):
+        return render_ast(node.body) + " if " + render_ast(node.test) + " else " + render_ast(node.orelse)
+    if isinstance(node, ast.Call):
+        args = [render_ast(arg) for arg in node.args]
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                args.append("**" + render_ast(keyword.value))
+            else:
+                args.append(keyword.arg + "=" + render_ast(keyword.value))
+        return render_ast(node.func) + "(" + ", ".join(args) + ")"
+    if isinstance(node, ast.Lambda):
+        args = render_arguments(node.args)
+        return "lambda " + args + ": " + render_ast(node.body)
+    if isinstance(node, ast.JoinedStr):
+        # Render f-strings, including common conversions and format specs.
+        pieces = []
+        for value in node.values:
+            if isinstance(value, ast.Str):
+                text = value.s
+                pieces.append(text.replace("{", "{{").replace("}", "}}"))
+            elif isinstance(value, ast.FormattedValue):
+                expression = render_ast(value.value)
+                if value.conversion == ord("s"):
+                    expression += "!s"
+                elif value.conversion == ord("r"):
+                    expression += "!r"
+                elif value.conversion == ord("a"):
+                    expression += "!a"
+                if value.format_spec is not None:
+                    expression += ":" + render_ast(value.format_spec)
+                pieces.append("{" + expression + "}")
+            else:
+                raise ValueError("Unsupported f-string node: " + type(value).__name__)
+        # repr chooses a safe quote style; prefix with f.
+        return "f" + repr("".join(pieces))
+    if isinstance(node, ast.FormattedValue):
+        return "{" + render_ast(node.value) + "}"
+    if isinstance(node, ast.ListComp):
+        return "[" + render_ast(node.elt) + " " + render_comprehensions(node.generators) + "]"
+    if isinstance(node, ast.SetComp):
+        return "{" + render_ast(node.elt) + " " + render_comprehensions(node.generators) + "}"
+    if isinstance(node, ast.GeneratorExp):
+        return "(" + render_ast(node.elt) + " " + render_comprehensions(node.generators) + ")"
+    if isinstance(node, ast.DictComp):
+        return "{" + render_ast(node.key) + ": " + render_ast(node.value) + " " + render_comprehensions(node.generators) + "}"
+    if isinstance(node, ast.Await):
+        return "await " + render_ast(node.value)
+    if isinstance(node, ast.Yield):
+        return "yield" + ((" " + render_ast(node.value)) if node.value is not None else "")
+    if isinstance(node, ast.YieldFrom):
+        return "yield from " + render_ast(node.value)
+    if isinstance(node, ast.Starred):
+        return "*" + render_ast(node.value)
+    if isinstance(node, ast.NamedExpr):
+        return "(" + render_ast(node.target) + " := " + render_ast(node.value) + ")"
+
+    raise ValueError("Unsupported AST node without ast.unparse: " + type(node).__name__)
 
 
-def expression_to_text(node: Optional[ast.AST]) -> Optional[str]:
-    if node is None:
-        return None
-    try:
-        return unparse_node(node)
-    except Exception:
-        return None
+def render_comprehensions(generators):
+    pieces = []
+    for generator in generators:
+        piece = "async for " if generator.is_async else "for "
+        piece += render_ast(generator.target) + " in " + render_ast(generator.iter)
+        for condition in generator.ifs:
+            piece += " if " + render_ast(condition)
+        pieces.append(piece)
+    return " ".join(pieces)
 
 
-def get_docstring(node: ast.AST) -> Optional[str]:
-    value = ast.get_docstring(node, clean=False)
-    return value if value else None
-
-
-def get_arguments(node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> List[Dict[str, Any]]:
-    """Extract parameters, including positional-only, keyword-only, *args and **kwargs."""
-    args = node.args
-    result: List[Dict[str, Any]] = []
-
+def render_arguments(args):
+    """Render lambda/function argument declarations from ast.arguments."""
+    result = []
     positional = list(args.posonlyargs) + list(args.args)
     defaults_start = len(positional) - len(args.defaults)
 
     for index, arg in enumerate(positional):
-        default_node = args.defaults[index - defaults_start] if index >= defaults_start else None
-        if index < len(args.posonlyargs):
-            kind = "positional_only"
-        else:
-            kind = "positional_or_keyword"
-        result.append({
-            "name": arg.arg,
-            "kind": kind,
-            "annotation": annotation_to_text(arg.annotation),
-            "default": expression_to_text(default_node),
-        })
+        text = arg.arg
+        if arg.annotation is not None:
+            text += ": " + render_ast(arg.annotation)
+        if index >= defaults_start:
+            text += " = " + render_ast(args.defaults[index - defaults_start])
+        result.append(text)
+        if args.posonlyargs and index == len(args.posonlyargs) - 1:
+            result.append("/")
 
-    if args.vararg:
-        result.append({
-            "name": args.vararg.arg,
-            "kind": "var_positional",
-            "annotation": annotation_to_text(args.vararg.annotation),
-            "default": None,
-        })
+    if args.vararg is not None:
+        text = "*" + args.vararg.arg
+        if args.vararg.annotation is not None:
+            text += ": " + render_ast(args.vararg.annotation)
+        result.append(text)
+    elif args.kwonlyargs:
+        result.append("*")
 
-    for arg, default_node in zip(args.kwonlyargs, args.kw_defaults):
-        result.append({
-            "name": arg.arg,
-            "kind": "keyword_only",
-            "annotation": annotation_to_text(arg.annotation),
-            "default": expression_to_text(default_node),
-        })
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        text = arg.arg
+        if arg.annotation is not None:
+            text += ": " + render_ast(arg.annotation)
+        if default is not None:
+            text += " = " + render_ast(default)
+        result.append(text)
 
-    if args.kwarg:
-        result.append({
-            "name": args.kwarg.arg,
-            "kind": "var_keyword",
-            "annotation": annotation_to_text(args.kwarg.annotation),
-            "default": None,
-        })
+    if args.kwarg is not None:
+        text = "**" + args.kwarg.arg
+        if args.kwarg.annotation is not None:
+            text += ": " + render_ast(args.kwarg.annotation)
+        result.append(text)
 
+    return ", ".join(result)
+
+
+# ---------- Python source analysis ----------
+
+def get_docstring(node):
+    try:
+        return ast.get_docstring(node, clean=False)
+    except (TypeError, AttributeError):
+        return None
+
+
+def get_decorators(node):
+    result = []
+    for decorator in getattr(node, "decorator_list", []):
+        try:
+            result.append(render_ast(decorator))
+        except ValueError:
+            result.append("<unsupported:" + type(decorator).__name__ + ">")
     return result
 
 
-def get_imports(tree: ast.Module) -> List[Dict[str, Any]]:
-    imports: List[Dict[str, Any]] = []
+def get_imports(tree):
+    imports = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.append({
                 "kind": "import",
                 "module": None,
+                "level": 0,
                 "names": [
                     {"name": alias.name, "asname": alias.asname}
                     for alias in node.names
@@ -221,118 +270,128 @@ def get_imports(tree: ast.Module) -> List[Dict[str, Any]]:
                 ],
                 "line": node.lineno,
             })
-    imports.sort(key=lambda item: item["line"])
-    return imports
+    return sorted(imports, key=lambda item: item["line"])
 
 
-def get_decorators(node: ast.AST) -> List[str]:
-    return [
-        unparse_node(decorator)
-        for decorator in getattr(node, "decorator_list", [])
-    ]
+def get_function_metadata(node, is_method=False):
+    args = node.args
+    parameters = []
+    positional = list(args.posonlyargs) + list(args.args)
+    defaults_start = len(positional) - len(args.defaults)
 
+    for index, arg in enumerate(positional):
+        if index < len(args.posonlyargs):
+            kind = "positional_only"
+        else:
+            kind = "positional_or_keyword"
+        default = args.defaults[index - defaults_start] if index >= defaults_start else None
+        parameters.append({
+            "name": arg.arg,
+            "kind": kind,
+            "annotation": render_ast(arg.annotation) if arg.annotation is not None else None,
+            "default": render_ast(default) if default is not None else None,
+        })
 
-def get_function_metadata(
-    node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
-    *,
-    class_method: bool = False,
-) -> Dict[str, Any]:
+    if args.vararg is not None:
+        parameters.append({
+            "name": args.vararg.arg,
+            "kind": "var_positional",
+            "annotation": render_ast(args.vararg.annotation) if args.vararg.annotation is not None else None,
+            "default": None,
+        })
+
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+        parameters.append({
+            "name": arg.arg,
+            "kind": "keyword_only",
+            "annotation": render_ast(arg.annotation) if arg.annotation is not None else None,
+            "default": render_ast(default) if default is not None else None,
+        })
+
+    if args.kwarg is not None:
+        parameters.append({
+            "name": args.kwarg.arg,
+            "kind": "var_keyword",
+            "annotation": render_ast(args.kwarg.annotation) if args.kwarg.annotation is not None else None,
+            "default": None,
+        })
+
+    return_type = render_ast(node.returns) if node.returns is not None else None
+    prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+    signature_args = render_arguments(args)
+    signature = prefix + " " + node.name + "(" + signature_args + ")"
+    if return_type:
+        signature += " -> " + return_type
+
     return {
         "name": node.name,
         "kind": "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function",
         "line": node.lineno,
         "end_line": getattr(node, "end_lineno", None),
         "decorators": get_decorators(node),
-        "arguments": get_arguments(node),
-        "return_type": annotation_to_text(node.returns),
-        "signature": function_signature(node),
+        "arguments": parameters,
+        "return_type": return_type,
+        "signature": signature,
         "docstring": get_docstring(node),
-        "is_method": class_method,
+        "is_method": is_method,
     }
 
 
-def function_signature(node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> str:
-    """Render a readable function signature without its implementation."""
-    prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
-    parameters = []
-    args = node.args
-    positional = list(args.posonlyargs) + list(args.args)
-    defaults_start = len(positional) - len(args.defaults)
-    for index, arg in enumerate(positional):
-        item = arg.arg
-        annotation = annotation_to_text(arg.annotation)
-        if annotation:
-            item += ": " + annotation
-        if index >= defaults_start:
-            default = expression_to_text(args.defaults[index - defaults_start])
-            if default is not None:
-                item += " = " + default
-        parameters.append(item)
-        if args.posonlyargs and index == len(args.posonlyargs) - 1:
-            parameters.append("/")
-    if args.vararg:
-        item = "*" + args.vararg.arg
-        annotation = annotation_to_text(args.vararg.annotation)
-        if annotation:
-            item += ": " + annotation
-        parameters.append(item)
-    elif args.kwonlyargs:
-        parameters.append("*")
-    for arg, default_node in zip(args.kwonlyargs, args.kw_defaults):
-        item = arg.arg
-        annotation = annotation_to_text(arg.annotation)
-        if annotation:
-            item += ": " + annotation
-        default = expression_to_text(default_node)
-        if default is not None:
-            item += " = " + default
-        parameters.append(item)
-    if args.kwarg:
-        item = "**" + args.kwarg.arg
-        annotation = annotation_to_text(args.kwarg.annotation)
-        if annotation:
-            item += ": " + annotation
-        parameters.append(item)
-    return_type = annotation_to_text(node.returns)
-    result = "{} {}({})".format(prefix, node.name, ", ".join(parameters))
-    if return_type:
-        result += " -> " + return_type
-    return result
-
-
-
-def get_class_metadata(node: ast.ClassDef) -> Dict[str, Any]:
+def get_class_metadata(node):
     methods = []
     nested_classes = []
     class_attributes = []
 
     for child in node.body:
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            methods.append(get_function_metadata(child, class_method=True))
+            methods.append(get_function_metadata(child, is_method=True))
         elif isinstance(child, ast.ClassDef):
             nested_classes.append(get_class_metadata(child))
-        elif isinstance(child, (ast.Assign, ast.AnnAssign)):
-            targets: List[ast.AST] = child.targets if isinstance(child, ast.Assign) else [child.target]
-            for target in targets:
+        elif isinstance(child, ast.Assign):
+            for target in child.targets:
                 if isinstance(target, ast.Name):
+                    try:
+                        value = render_ast(child.value)
+                    except ValueError:
+                        value = None
                     class_attributes.append({
-                        "name": target.id,
-                        "annotation": annotation_to_text(child.annotation)
-                        if isinstance(child, ast.AnnAssign) else None,
-                        "value": expression_to_text(child.value),
-                        "line": child.lineno,
+                        "name": target.id, "annotation": None,
+                        "value": value, "line": child.lineno,
                     })
+        elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+            try:
+                value = render_ast(child.value) if child.value is not None else None
+            except ValueError:
+                value = None
+            class_attributes.append({
+                "name": child.target.id,
+                "annotation": render_ast(child.annotation),
+                "value": value,
+                "line": child.lineno,
+            })
+
+    bases = []
+    for base in node.bases:
+        try:
+            bases.append(render_ast(base))
+        except ValueError:
+            bases.append("<unsupported:" + type(base).__name__ + ">")
+
+    keywords = []
+    for keyword in node.keywords:
+        try:
+            value = render_ast(keyword.value)
+        except ValueError:
+            value = None
+        keywords.append({"name": keyword.arg, "value": value})
 
     return {
         "name": node.name,
         "line": node.lineno,
         "end_line": getattr(node, "end_lineno", None),
         "decorators": get_decorators(node),
-        "bases": [expression_to_text(base) for base in node.bases],
-        "keywords": [
-            {"name": keyword.arg, "value": expression_to_text(keyword.value)}
-            for keyword in node.keywords
-        ],
+        "bases": bases,
+        "keywords": keywords,
         "docstring": get_docstring(node),
         "methods": methods,
         "nested_classes": nested_classes,
@@ -340,13 +399,13 @@ def get_class_metadata(node: ast.ClassDef) -> Dict[str, Any]:
     }
 
 
-def analyze_python_file(path: Path, relative_path: str) -> Dict[str, Any]:
+def analyze_python_file(path, relative_path):
     try:
         source = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         source = path.read_text(encoding="utf-8", errors="replace")
 
-    record: Dict[str, Any] = {
+    record = {
         "path": relative_path,
         "type": "python",
         "module_docstring": None,
@@ -359,395 +418,393 @@ def analyze_python_file(path: Path, relative_path: str) -> Dict[str, Any]:
 
     try:
         tree = ast.parse(source, filename=relative_path)
-    except SyntaxError as exc:
+    except SyntaxError as error:
         record["parse_error"] = {
-            "message": exc.msg,
-            "line": exc.lineno,
-            "offset": exc.offset,
+            "message": error.msg,
+            "line": error.lineno,
+            "offset": error.offset,
         }
         return record
 
     record["module_docstring"] = get_docstring(tree)
     record["imports"] = get_imports(tree)
 
-    # Only top-level definitions are recorded here. Methods are recorded under classes.
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             record["classes"].append(get_class_metadata(node))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             record["functions"].append(get_function_metadata(node))
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
                 if isinstance(target, ast.Name):
+                    try:
+                        value = render_ast(node.value)
+                    except ValueError:
+                        value = None
                     record["module_variables"].append({
-                        "name": target.id,
-                        "annotation": annotation_to_text(node.annotation)
-                        if isinstance(node, ast.AnnAssign) else None,
-                        "value": expression_to_text(node.value),
-                        "line": node.lineno,
+                        "name": target.id, "annotation": None,
+                        "value": value, "line": node.lineno,
                     })
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            try:
+                value = render_ast(node.value) if node.value is not None else None
+            except ValueError:
+                value = None
+            record["module_variables"].append({
+                "name": node.target.id,
+                "annotation": render_ast(node.annotation),
+                "value": value,
+                "line": node.lineno,
+            })
 
     return record
 
 
-def iter_repository_files(root: Path, include_hidden: bool = False):
-    for current, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(
-            directory for directory in dirs
-            if directory not in IGNORED_DIRS
-            and (include_hidden or not directory.startswith("."))
+# ---------- Repository scanning and metadata ----------
+
+def is_ignored_path(relative_path, include_hidden):
+    parts = Path(relative_path).parts
+    for part in parts:
+        if part in IGNORED_DIRS:
+            return True
+        if not include_hidden and part.startswith("."):
+            return True
+    return False
+
+
+def scan_files(root, include_hidden=False):
+    for current, directories, filenames in os.walk(str(root), followlinks=False):
+        current_path = Path(current)
+        relative_directory = current_path.relative_to(root)
+        directories[:] = sorted(
+            name for name in directories
+            if name not in IGNORED_DIRS
+            and (include_hidden or not name.startswith("."))
         )
-        for filename in sorted(files):
-            path = Path(current) / filename
-            if path.is_symlink():
+        for filename in sorted(filenames):
+            path = current_path / filename
+            if path.is_symlink() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
                 continue
-            if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            relative = path.relative_to(root).as_posix()
+            if is_ignored_path(relative, include_hidden):
                 continue
-            if not include_hidden and any(part.startswith(".") for part in path.relative_to(root).parts):
-                continue
-            yield path
+            yield path, relative
 
 
-def analyze_repository(root: Path, include_hidden: bool = False) -> Dict[str, Any]:
-    root = root.resolve()
+def analyze_repository(root, include_hidden=False):
+    root = Path(root).resolve()
     if not root.is_dir():
-        raise NotADirectoryError(f"Repository root is not a directory: {root}")
+        raise NotADirectoryError("Repository root is not a directory: " + str(root))
 
-    files: List[Dict[str, Any]] = []
-    for path in iter_repository_files(root, include_hidden=include_hidden):
-        relative_path = safe_relative_path(path, root)
+    files = []
+    for path, relative in scan_files(root, include_hidden):
         if path.suffix.lower() == ".py":
-            files.append(analyze_python_file(path, relative_path))
+            files.append(analyze_python_file(path, relative))
         else:
-            # Deliberately do not read/store JSON contents.
+            # Do not read JSON file content; preserve path and basename only.
             files.append({
-                "path": relative_path,
+                "path": relative,
                 "type": "json",
                 "filename": path.name,
-                "placeholder": {},
             })
 
     files.sort(key=lambda item: item["path"])
+    python_count = sum(1 for item in files if item["type"] == "python")
+    json_count = sum(1 for item in files if item["type"] == "json")
+
     return {
         "metadata_version": METADATA_VERSION,
         "source_root_name": root.name,
-        "purpose": "Repository structure and Python interface skeleton metadata",
+        "purpose": "Repository structure and Python interface metadata",
         "supported_file_types": [".py", ".json"],
-        "options": {
+        "generation_options": {
             "python_body_mode": "stub",
             "json_generation_mode": "empty_object",
             "ignored_directories": sorted(IGNORED_DIRS),
         },
         "summary": {
             "file_count": len(files),
-            "python_file_count": sum(item["type"] == "python" for item in files),
-            "json_file_count": sum(item["type"] == "json" for item in files),
+            "python_file_count": python_count,
+            "json_file_count": json_count,
         },
         "files": files,
     }
 
 
-def render_annotation(annotation: Optional[str]) -> str:
-    return f": {annotation}" if annotation else ""
+# ---------- Skeleton generation ----------
+
+def quote_docstring(text, indent):
+    return [indent + repr(text)]
 
 
-def render_parameter(param: Dict[str, Any]) -> str:
-    name = param["name"]
-    kind = param.get("kind")
-    annotation = render_annotation(param.get("annotation"))
-    default = param.get("default")
-    default_text = f" = {default}" if default is not None else ""
+def render_function_stub(info, indent=""):
+    lines = []
+    for decorator in info.get("decorators", []):
+        lines.append(indent + "@" + decorator)
 
-    if kind == "var_positional":
-        return f"*{name}{annotation}"
-    if kind == "var_keyword":
-        return f"**{name}{annotation}"
-    return f"{name}{annotation}{default_text}"
+    args = info.get("arguments", [])
+    rendered = []
+    seen_posonly = False
+    inserted_kwonly_marker = False
+    has_varargs = any(item.get("kind") == "var_positional" for item in args)
 
+    for item in args:
+        kind = item.get("kind")
+        if kind == "positional_only":
+            seen_posonly = True
+        elif seen_posonly:
+            if rendered and rendered[-1] != "/":
+                rendered.append("/")
+            seen_posonly = False
 
-def render_function(function: Dict[str, Any], indent: str = "") -> List[str]:
-    lines: List[str] = []
-    for decorator in function.get("decorators", []):
-        lines.append(f"{indent}@{decorator}")
+        if kind == "keyword_only" and not inserted_kwonly_marker:
+            if not has_varargs:
+                rendered.append("*")
+            inserted_kwonly_marker = True
 
-    kind = function.get("kind", "function")
-    prefix = "async def" if kind == "async_function" else "def"
-    args = function.get("arguments", [])
+        name = item["name"]
+        annotation = item.get("annotation")
+        default = item.get("default")
+        if kind == "var_positional":
+            name = "*" + name
+        elif kind == "var_keyword":
+            name = "**" + name
+        if annotation:
+            name += ": " + annotation
+        if default is not None and kind not in ("var_positional", "var_keyword"):
+            name += " = " + default
+        rendered.append(name)
 
-    # Rebuild separators for positional-only and keyword-only parameters.
-    rendered_args: List[str] = []
-    seen_positional_only = False
-    seen_keyword_only = False
-    has_var_positional = any(p.get("kind") == "var_positional" for p in args)
+    if seen_posonly:
+        rendered.append("/")
 
-    for param in args:
-        param_kind = param.get("kind")
-        if param_kind == "positional_only":
-            seen_positional_only = True
-        elif seen_positional_only and rendered_args and rendered_args[-1] != "/":
-            rendered_args.append("/")
-            seen_positional_only = False
-        if param_kind == "keyword_only" and not seen_keyword_only:
-            if not has_var_positional:
-                rendered_args.append("*")
-            seen_keyword_only = True
-        rendered_args.append(render_parameter(param))
+    return_type = info.get("return_type")
+    prefix = "async def" if info.get("kind") == "async_function" else "def"
+    signature = indent + prefix + " " + info["name"] + "(" + ", ".join(rendered) + ")"
+    if return_type:
+        signature += " -> " + return_type
+    lines.append(signature + ":")
 
-    if seen_positional_only:
-        rendered_args.append("/")
-
-    return_type = function.get("return_type")
-    return_part = f" -> {return_type}" if return_type else ""
-    lines.append(f"{indent}{prefix} {function['name']}({', '.join(rendered_args)}){return_part}:")
-
-    docstring = function.get("docstring")
     body_indent = indent + "    "
-    if docstring:
-        lines.extend(render_docstring(docstring, body_indent))
-    lines.append(f"{body_indent}...")
+    if info.get("docstring"):
+        lines.extend(quote_docstring(info["docstring"], body_indent))
+    lines.append(body_indent + "...")
     return lines
 
 
-def render_docstring(docstring: str, indent: str) -> List[str]:
-    """Emit a valid quoted docstring while retaining its text."""
-    encoded = json.dumps(docstring, ensure_ascii=False)
-    return [f"{indent}{encoded}"]
+def render_class_stub(info, indent=""):
+    lines = []
+    for decorator in info.get("decorators", []):
+        lines.append(indent + "@" + decorator)
 
-
-def render_class(class_info: Dict[str, Any], indent: str = "") -> List[str]:
-    lines: List[str] = []
-    for decorator in class_info.get("decorators", []):
-        lines.append(f"{indent}@{decorator}")
-
-    bases = class_info.get("bases", [])
-    bases = [base for base in bases if base]
-    base_part = f"({', '.join(bases)})" if bases else ""
-    lines.append(f"{indent}class {class_info['name']}{base_part}:")
-
+    bases = info.get("bases", [])
+    base_text = "(" + ", ".join(bases) + ")" if bases else ""
+    lines.append(indent + "class " + info["name"] + base_text + ":")
     body_indent = indent + "    "
-    body: List[str] = []
+    body = []
 
-    if class_info.get("docstring"):
-        body.extend(render_docstring(class_info["docstring"], body_indent))
+    if info.get("docstring"):
+        body.extend(quote_docstring(info["docstring"], body_indent))
 
-    for attr in class_info.get("class_attributes", []):
-        annotation = render_annotation(attr.get("annotation"))
-        value = attr.get("value")
-        value_part = f" = {value}" if value is not None else ""
-        body.append(f"{body_indent}{attr['name']}{annotation}{value_part}")
+    for attribute in info.get("class_attributes", []):
+        line = body_indent + attribute["name"]
+        if attribute.get("annotation"):
+            line += ": " + attribute["annotation"]
+        if attribute.get("value") is not None:
+            line += " = " + attribute["value"]
+        body.append(line)
 
-    for method in class_info.get("methods", []):
+    for method in info.get("methods", []):
         if body:
             body.append("")
-        body.extend(render_function(method, body_indent))
+        body.extend(render_function_stub(method, body_indent))
 
-    for nested in class_info.get("nested_classes", []):
+    for nested in info.get("nested_classes", []):
         if body:
             body.append("")
-        body.extend(render_class(nested, body_indent))
+        body.extend(render_class_stub(nested, body_indent))
 
     if not body:
-        body.append(f"{body_indent}...")
+        body.append(body_indent + "...")
 
     lines.extend(body)
     return lines
 
 
-def render_python_skeleton(file_info: Dict[str, Any]) -> str:
-    lines: List[str] = []
-    module_docstring = file_info.get("module_docstring")
-    if module_docstring:
-        lines.extend(render_docstring(module_docstring, ""))
+def render_python_skeleton(info):
+    lines = []
+    if info.get("module_docstring"):
+        lines.extend(quote_docstring(info["module_docstring"], ""))
 
-    for item in file_info.get("imports", []):
+    for item in info.get("imports", []):
+        aliases = []
+        for alias in item.get("names", []):
+            text = alias["name"]
+            if alias.get("asname"):
+                text += " as " + alias["asname"]
+            aliases.append(text)
         if item["kind"] == "import":
-            pieces = []
-            for alias in item["names"]:
-                text = alias["name"]
-                if alias.get("asname"):
-                    text += f" as {alias['asname']}"
-                pieces.append(text)
-            lines.append("import " + ", ".join(pieces))
+            lines.append("import " + ", ".join(aliases))
         else:
             module = "." * item.get("level", 0) + (item.get("module") or "")
-            pieces = []
-            for alias in item["names"]:
-                text = alias["name"]
-                if alias.get("asname"):
-                    text += f" as {alias['asname']}"
-                pieces.append(text)
-            lines.append(f"from {module} import " + ", ".join(pieces))
+            lines.append("from " + module + " import " + ", ".join(aliases))
 
-    if lines and (file_info.get("classes") or file_info.get("functions") or file_info.get("module_variables")):
+    if lines and (info.get("module_variables") or info.get("classes") or info.get("functions")):
         lines.append("")
 
-    for variable in file_info.get("module_variables", []):
-        annotation = render_annotation(variable.get("annotation"))
-        value = variable.get("value")
-        value_part = f" = {value}" if value is not None else ""
-        lines.append(f"{variable['name']}{annotation}{value_part}")
+    for variable in info.get("module_variables", []):
+        line = variable["name"]
+        if variable.get("annotation"):
+            line += ": " + variable["annotation"]
+        if variable.get("value") is not None:
+            line += " = " + variable["value"]
+        lines.append(line)
 
-    definitions: List[List[str]] = []
-    definitions.extend([render_class(item) for item in file_info.get("classes", [])])
-    definitions.extend([render_function(item) for item in file_info.get("functions", [])])
-
-    if file_info.get("parse_error"):
-        lines.append("# Original file could not be parsed; generated placeholder.")
-        lines.append("# Parse error: " + file_info["parse_error"]["message"])
+    definitions = []
+    definitions.extend(render_class_stub(item) for item in info.get("classes", []))
+    definitions.extend(render_function_stub(item) for item in info.get("functions", []))
 
     for definition in definitions:
         if lines:
             lines.append("")
         lines.extend(definition)
 
+    if info.get("parse_error"):
+        lines.append("# Original Python file could not be parsed.")
+        lines.append("# Parse error: " + info["parse_error"]["message"])
+
     if not lines:
-        lines = ['"""Generated skeleton; original file had no extractable interface."""', ""]
+        lines = ['"""Generated Python skeleton."""', ""]
 
     return "\n".join(lines).rstrip() + "\n"
 
 
-def validate_relative_path(raw_path: str) -> Path:
-    """Reject absolute paths and traversal entries from untrusted metadata."""
-    candidate = Path(raw_path)
-    if candidate.is_absolute() or ".." in candidate.parts:
-        raise ValueError(f"Unsafe relative path in metadata: {raw_path}")
-    if candidate.suffix.lower() not in SUPPORTED_SUFFIXES:
-        raise ValueError(f"Unsupported file type in metadata: {raw_path}")
-    return candidate
+def safe_relative_path(raw_path):
+    path = Path(raw_path)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("Unsafe relative path in metadata: " + raw_path)
+    if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        raise ValueError("Unsupported file extension in metadata: " + raw_path)
+    return path
 
 
-def generate_skeleton(metadata_path: Path, output_dir: Path, overwrite: bool = False) -> None:
+def generate_skeleton(metadata_path, output_dir, overwrite=False):
+    metadata_path = Path(metadata_path)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata.get("metadata_version") != METADATA_VERSION:
-        raise ValueError(
-            f"Unsupported metadata version: {metadata.get('metadata_version')}"
-        )
+        raise ValueError("Unsupported metadata version: " + str(metadata.get("metadata_version")))
 
-    output_dir = output_dir.resolve()
+    output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for file_info in metadata.get("files", []):
-        relative = validate_relative_path(file_info["path"])
+    for info in metadata.get("files", []):
+        relative = safe_relative_path(info["path"])
         destination = output_dir / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         if destination.exists() and not overwrite:
             raise FileExistsError(
-                f"Refusing to overwrite existing file: {destination}. "
-                "Use --overwrite to replace it."
+                "Refusing to overwrite existing file: " + str(destination)
+                + " (use --overwrite to replace it)"
             )
 
-        if file_info.get("type") == "python" and relative.suffix.lower() == ".py":
-            content = render_python_skeleton(file_info)
-        elif file_info.get("type") == "json" and relative.suffix.lower() == ".json":
-            # Empty JSON placeholder: original JSON data is not embedded in metadata.
-            content = json.dumps(file_info.get("placeholder", {}), indent=2) + "\n"
+        if info.get("type") == "python" and relative.suffix.lower() == ".py":
+            content = render_python_skeleton(info)
+        elif info.get("type") == "json" and relative.suffix.lower() == ".json":
+            content = "{}\n"
         else:
-            raise ValueError(f"Metadata file type does not match path: {relative}")
+            raise ValueError("Metadata type does not match path: " + str(relative))
 
         destination.write_text(content, encoding="utf-8")
 
+    manifest_path = output_dir / "SKELETON_MANIFEST.json"
+    if manifest_path.exists() and not overwrite:
+        raise FileExistsError(
+            "Refusing to overwrite existing file: " + str(manifest_path)
+            + " (use --overwrite to replace it)"
+        )
     manifest = {
         "generated_from_metadata": metadata_path.name,
         "metadata_version": METADATA_VERSION,
         "file_count": len(metadata.get("files", [])),
     }
-    manifest_path = output_dir / "SKELETON_MANIFEST.json"
-    if manifest_path.exists() and not overwrite:
-        raise FileExistsError(
-            f"Refusing to overwrite existing file: {manifest_path}. "
-            "Use --overwrite to replace it."
-        )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def build_parser() -> argparse.ArgumentParser:
+# ---------- CLI ----------
+
+def make_parser():
     parser = argparse.ArgumentParser(
-        description="Analyze Python/JSON repository files and recreate a skeleton."
+        description="Analyze Python/JSON repositories and generate interface skeletons."
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command")
 
-    analyze_parser = subparsers.add_parser("analyze", help="Analyze a repository")
-    analyze_parser.add_argument("repo", type=Path, help="Source repository directory")
+    analyze_parser = commands.add_parser("analyze", help="Analyze a source repository")
+    analyze_parser.add_argument("repo", help="Source repository directory")
     analyze_parser.add_argument(
-        "--output", "-o", type=Path, default=Path("repository_meta.json"),
-        help="Metadata JSON output path (default: repository_meta.json)",
+        "--output", "-o", default="repository_meta.json",
+        help="Metadata output file (default: repository_meta.json)",
     )
-    analyze_parser.add_argument(
-        "--include-hidden", action="store_true",
-        help="Include hidden files/directories except standard ignored directories",
-    )
+    analyze_parser.add_argument("--include-hidden", action="store_true")
 
-    generate_parser = subparsers.add_parser(
-        "generate", help="Generate a skeleton from metadata JSON"
-    )
-    generate_parser.add_argument("metadata", type=Path, help="Metadata JSON file")
-    generate_parser.add_argument(
-        "--output-dir", "-o", type=Path, required=True,
-        help="Directory where the skeleton will be created",
-    )
-    generate_parser.add_argument(
-        "--overwrite", action="store_true",
-        help="Allow replacing existing generated files",
-    )
+    generate_parser = commands.add_parser("generate", help="Generate skeleton from metadata")
+    generate_parser.add_argument("metadata", help="Metadata JSON path")
+    generate_parser.add_argument("--output-dir", "-o", required=True)
+    generate_parser.add_argument("--overwrite", action="store_true")
 
-    roundtrip_parser = subparsers.add_parser(
-        "roundtrip", help="Analyze a repository and generate its skeleton"
-    )
-    roundtrip_parser.add_argument("repo", type=Path, help="Source repository directory")
-    roundtrip_parser.add_argument(
-        "--meta", type=Path, default=Path("repository_meta.json"),
-        help="Metadata JSON output path",
-    )
-    roundtrip_parser.add_argument(
-        "--output-dir", type=Path, required=True,
-        help="Directory where the skeleton will be created",
-    )
+    roundtrip_parser = commands.add_parser("roundtrip", help="Analyze and generate skeleton")
+    roundtrip_parser.add_argument("repo", help="Source repository directory")
+    roundtrip_parser.add_argument("--meta", default="repository_meta.json")
+    roundtrip_parser.add_argument("--output-dir", required=True)
     roundtrip_parser.add_argument("--include-hidden", action="store_true")
     roundtrip_parser.add_argument("--overwrite", action="store_true")
+
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = build_parser()
+def write_metadata(metadata, output_path):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def main(argv=None):
+    parser = make_parser()
     args = parser.parse_args(argv)
+
+    if not args.command:
+        parser.print_help()
+        return 2
 
     try:
         if args.command == "analyze":
             metadata = analyze_repository(args.repo, args.include_hidden)
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(
-                json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            write_metadata(metadata, args.output)
             print(
-                f"Metadata written to {args.output} "
-                f"({metadata['summary']['python_file_count']} Python, "
-                f"{metadata['summary']['json_file_count']} JSON files)"
+                "Metadata written to {0} ({1} Python, {2} JSON files)".format(
+                    args.output,
+                    metadata["summary"]["python_file_count"],
+                    metadata["summary"]["json_file_count"],
+                )
             )
-
         elif args.command == "generate":
             generate_skeleton(args.metadata, args.output_dir, args.overwrite)
-            print(f"Skeleton generated at {args.output_dir}")
-
+            print("Skeleton generated at " + str(args.output_dir))
         elif args.command == "roundtrip":
             metadata = analyze_repository(args.repo, args.include_hidden)
-            args.meta.parent.mkdir(parents=True, exist_ok=True)
-            args.meta.write_text(
-                json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
+            write_metadata(metadata, args.meta)
             generate_skeleton(args.meta, args.output_dir, args.overwrite)
-            print(
-                f"Metadata written to {args.meta}; skeleton generated at {args.output_dir}"
-            )
-
+            print("Metadata written to {0}; skeleton generated at {1}".format(
+                args.meta, args.output_dir
+            ))
         return 0
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        print("ERROR: " + str(error), file=sys.stderr)
         return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
