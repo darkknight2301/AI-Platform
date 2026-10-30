@@ -5,7 +5,7 @@ Repository analyzer and skeleton generator.
 Analyzes .py and .json files and writes one metadata JSON file.
 Can then recreate a lightweight repository skeleton from that metadata.
 
-Python: 3.9+
+Python: 3.8+
 No third-party dependencies.
 
 Examples:
@@ -28,7 +28,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 
 METADATA_VERSION = 1
@@ -49,12 +49,43 @@ def safe_relative_path(path: Path, root: Path) -> str:
         raise ValueError(f"Path {path} is outside repository root {root}") from exc
 
 
+def unparse_node(node: ast.AST) -> str:
+    """Render an AST node; use astunparse as an optional Python 3.8 fallback."""
+    unparse = getattr(ast, "unparse", None)
+    if unparse is not None:
+        return unparse(node)
+    try:
+        import astunparse
+        return astunparse.unparse(node).strip()
+    except ImportError:
+        # Minimal fallback for common names and annotations.
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Constant):
+            return repr(node.value)
+        if isinstance(node, ast.Attribute):
+            return unparse_node(node.value) + "." + node.attr
+        if isinstance(node, ast.Subscript):
+            return unparse_node(node.value) + "[" + unparse_node(node.slice) + "]"
+        if hasattr(ast, "Index") and isinstance(node, ast.Index):
+            return unparse_node(node.value)
+        if isinstance(node, ast.Tuple):
+            return ", ".join(unparse_node(item) for item in node.elts)
+        if isinstance(node, ast.List):
+            return "[" + ", ".join(unparse_node(item) for item in node.elts) + "]"
+        if isinstance(node, ast.Call):
+            args = [unparse_node(arg) for arg in node.args]
+            args.extend((kw.arg + "=" if kw.arg else "**") + unparse_node(kw.value) for kw in node.keywords)
+            return unparse_node(node.func) + "(" + ", ".join(args) + ")"
+        raise ValueError("Cannot render AST node without astunparse: " + type(node).__name__)
+
+
 def annotation_to_text(node: Optional[ast.AST]) -> Optional[str]:
     """Convert an annotation AST node to readable source text."""
     if node is None:
         return None
     try:
-        return ast.unparse(node)
+        return unparse_node(node)
     except Exception:
         return None
 
@@ -63,7 +94,7 @@ def expression_to_text(node: Optional[ast.AST]) -> Optional[str]:
     if node is None:
         return None
     try:
-        return ast.unparse(node)
+        return unparse_node(node)
     except Exception:
         return None
 
@@ -73,7 +104,7 @@ def get_docstring(node: ast.AST) -> Optional[str]:
     return value if value else None
 
 
-def get_arguments(node: ast.FunctionDef | ast.AsyncFunctionDef) -> List[Dict[str, Any]]:
+def get_arguments(node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> List[Dict[str, Any]]:
     """Extract parameters, including positional-only, keyword-only, *args and **kwargs."""
     args = node.args
     result: List[Dict[str, Any]] = []
@@ -151,13 +182,13 @@ def get_imports(tree: ast.Module) -> List[Dict[str, Any]]:
 
 def get_decorators(node: ast.AST) -> List[str]:
     return [
-        ast.unparse(decorator)
+        unparse_node(decorator)
         for decorator in getattr(node, "decorator_list", [])
     ]
 
 
 def get_function_metadata(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
     *,
     class_method: bool = False,
 ) -> Dict[str, Any]:
@@ -175,14 +206,53 @@ def get_function_metadata(
     }
 
 
-def function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    """Render a function signature without its implementation."""
-    try:
-        source = ast.unparse(node)
-        return source.split(":", 1)[0].strip()
-    except Exception:
-        prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
-        return f"{prefix} {node.name}(...)"
+def function_signature(node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> str:
+    """Render a readable function signature without its implementation."""
+    prefix = "async def" if isinstance(node, ast.AsyncFunctionDef) else "def"
+    parameters = []
+    args = node.args
+    positional = list(args.posonlyargs) + list(args.args)
+    defaults_start = len(positional) - len(args.defaults)
+    for index, arg in enumerate(positional):
+        item = arg.arg
+        annotation = annotation_to_text(arg.annotation)
+        if annotation:
+            item += ": " + annotation
+        if index >= defaults_start:
+            default = expression_to_text(args.defaults[index - defaults_start])
+            if default is not None:
+                item += " = " + default
+        parameters.append(item)
+        if args.posonlyargs and index == len(args.posonlyargs) - 1:
+            parameters.append("/")
+    if args.vararg:
+        item = "*" + args.vararg.arg
+        annotation = annotation_to_text(args.vararg.annotation)
+        if annotation:
+            item += ": " + annotation
+        parameters.append(item)
+    elif args.kwonlyargs:
+        parameters.append("*")
+    for arg, default_node in zip(args.kwonlyargs, args.kw_defaults):
+        item = arg.arg
+        annotation = annotation_to_text(arg.annotation)
+        if annotation:
+            item += ": " + annotation
+        default = expression_to_text(default_node)
+        if default is not None:
+            item += " = " + default
+        parameters.append(item)
+    if args.kwarg:
+        item = "**" + args.kwarg.arg
+        annotation = annotation_to_text(args.kwarg.annotation)
+        if annotation:
+            item += ": " + annotation
+        parameters.append(item)
+    return_type = annotation_to_text(node.returns)
+    result = "{} {}({})".format(prefix, node.name, ", ".join(parameters))
+    if return_type:
+        result += " -> " + return_type
+    return result
 
 
 
