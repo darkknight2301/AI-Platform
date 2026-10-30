@@ -531,6 +531,58 @@ def analyze_repository(root, include_hidden=False):
     }
 
 
+def analyze_input(input_path, include_hidden=False):
+    """Analyze either a repository directory or one .py/.json file.
+
+    For a single file, its parent directory is the root so metadata stores the
+    filename as a relative path (without copying the absolute source path).
+    """
+    input_path = Path(input_path).resolve()
+    if input_path.is_dir():
+        return analyze_repository(input_path, include_hidden)
+
+    if not input_path.is_file():
+        raise FileNotFoundError("Input path does not exist: " + str(input_path))
+
+    if input_path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        raise ValueError(
+            "Unsupported input file type: " + input_path.suffix
+            + ". Supported types are .py and .json."
+        )
+
+    root = input_path.parent
+    relative = input_path.name
+    if input_path.suffix.lower() == ".py":
+        file_info = analyze_python_file(input_path, relative)
+    else:
+        # Do not read JSON contents; only preserve the file path and basename.
+        file_info = {
+            "path": relative,
+            "type": "json",
+            "filename": input_path.name,
+        }
+
+    python_count = 1 if file_info["type"] == "python" else 0
+    json_count = 1 if file_info["type"] == "json" else 0
+    return {
+        "metadata_version": METADATA_VERSION,
+        "source_root_name": root.name,
+        "purpose": "Single-file structure and Python interface metadata",
+        "supported_file_types": [".py", ".json"],
+        "generation_options": {
+            "python_body_mode": "stub",
+            "json_generation_mode": "empty_object",
+            "ignored_directories": sorted(IGNORED_DIRS),
+        },
+        "summary": {
+            "file_count": 1,
+            "python_file_count": python_count,
+            "json_file_count": json_count,
+        },
+        "files": [file_info],
+    }
+
+
 # ---------- Skeleton generation ----------
 
 def quote_docstring(text, indent):
@@ -739,8 +791,8 @@ def make_parser():
     )
     commands = parser.add_subparsers(dest="command")
 
-    analyze_parser = commands.add_parser("analyze", help="Analyze a source repository")
-    analyze_parser.add_argument("repo", help="Source repository directory")
+    analyze_parser = commands.add_parser("analyze", help="Analyze a source repository or a single .py/.json file")
+    analyze_parser.add_argument("repo", help="Source directory or one .py/.json file")
     analyze_parser.add_argument(
         "--output", "-o", default="repository_meta.json",
         help="Metadata output file (default: repository_meta.json)",
@@ -753,7 +805,7 @@ def make_parser():
     generate_parser.add_argument("--overwrite", action="store_true")
 
     roundtrip_parser = commands.add_parser("roundtrip", help="Analyze and generate skeleton")
-    roundtrip_parser.add_argument("repo", help="Source repository directory")
+    roundtrip_parser.add_argument("repo", help="Source directory or one .py/.json file")
     roundtrip_parser.add_argument("--meta", default="repository_meta.json")
     roundtrip_parser.add_argument("--output-dir", required=True)
     roundtrip_parser.add_argument("--include-hidden", action="store_true")
@@ -781,7 +833,7 @@ def main(argv=None):
 
     try:
         if args.command == "analyze":
-            metadata = analyze_repository(args.repo, args.include_hidden)
+            metadata = analyze_input(args.repo, args.include_hidden)
             write_metadata(metadata, args.output)
             print(
                 "Metadata written to {0} ({1} Python, {2} JSON files)".format(
@@ -794,7 +846,7 @@ def main(argv=None):
             generate_skeleton(args.metadata, args.output_dir, args.overwrite)
             print("Skeleton generated at " + str(args.output_dir))
         elif args.command == "roundtrip":
-            metadata = analyze_repository(args.repo, args.include_hidden)
+            metadata = analyze_input(args.repo, args.include_hidden)
             write_metadata(metadata, args.meta)
             generate_skeleton(args.meta, args.output_dir, args.overwrite)
             print("Metadata written to {0}; skeleton generated at {1}".format(
