@@ -77,6 +77,51 @@ def unparse_node(node: ast.AST) -> str:
             args = [unparse_node(arg) for arg in node.args]
             args.extend((kw.arg + "=" if kw.arg else "**") + unparse_node(kw.value) for kw in node.keywords)
             return unparse_node(node.func) + "(" + ", ".join(args) + ")"
+        if isinstance(node, ast.JoinedStr):
+            # Reconstruct f-strings on Python 3.8 when astunparse is unavailable.
+            pieces = []
+            for value in node.values:
+                if isinstance(value, ast.Str):
+                    literal = value.s
+                    pieces.append(literal.replace("{", "{{").replace("}", "}}"))
+                elif isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    literal = value.value
+                    pieces.append(literal.replace("{", "{{").replace("}", "}}"))
+                elif isinstance(value, ast.FormattedValue):
+                    expression = unparse_node(value.value)
+                    if value.conversion == ord("s"):
+                        expression += "!s"
+                    elif value.conversion == ord("r"):
+                        expression += "!r"
+                    elif value.conversion == ord("a"):
+                        expression += "!a"
+                    if value.format_spec is not None:
+                        spec = value.format_spec
+                        if isinstance(spec, ast.JoinedStr):
+                            spec_text = "".join(
+                                part.s if isinstance(part, ast.Str)
+                                else unparse_node(part.value) if isinstance(part, ast.FormattedValue)
+                                else str(getattr(part, "value", ""))
+                                for part in spec.values
+                            )
+                        else:
+                            spec_text = unparse_node(spec)
+                        expression += ":" + spec_text
+                    pieces.append("{" + expression + "}")
+                else:
+                    raise ValueError("Unsupported f-string component: " + type(value).__name__)
+            return "f" + repr("".join(pieces))
+        if isinstance(node, ast.FormattedValue):
+            return "{" + unparse_node(node.value) + "}"
+        if isinstance(node, ast.BinOp):
+            operators = {
+                ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/",
+                ast.FloorDiv: "//", ast.Mod: "%", ast.Pow: "**",
+                ast.BitOr: "|", ast.BitAnd: "&", ast.BitXor: "^",
+            }
+            operator = operators.get(type(node.op))
+            if operator:
+                return unparse_node(node.left) + " " + operator + " " + unparse_node(node.right)
         raise ValueError("Cannot render AST node without astunparse: " + type(node).__name__)
 
 
