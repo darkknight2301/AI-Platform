@@ -1,0 +1,105 @@
+%% Architecture.mmd - AI Agentic Test Engineering Platform - component view (D1)
+%% Revision 1 - 2026-10-31 - DRAFT for owner approval
+%% One diagram per file: Mermaid renders a single diagram from a .mmd file.
+%% D2-D8 (workflow, state machine, execution, failure analysis, deployment, data model, phases)
+%% are embedded in Architecture.md. Identifiers match the tables in Architecture.md.
+flowchart LR
+  subgraph SG_EXT["External systems (not built here)"]
+    XAP["XAP Existing AI platform"]
+    XCLI["XCLI Dev CLI and REST client"]
+    XLDAP["XLDAP LDAP directory"]
+    XGL["XGL GitLab"]
+    XTR["XTR TestRail, read only"]
+    XSUT["XSUT SUT hosts and DUT"]
+    XJEN["XJEN CLI and Jenkins launches"]
+  end
+  subgraph SG_EDGE["Edge"]
+    GW["GW API gateway and tool interface"]
+    IDP["IDP Identity and access adapter"]
+  end
+  subgraph SG_ORCH["Orchestration"]
+    WF["WF Workflow engine"]
+    APPR["APPR Approval service"]
+    INTAKE["INTAKE Intake agent"]
+    GENA["GENA Generator agent"]
+    MODA["MODA Modifier agent"]
+    REVA["REVA Reviewer agent"]
+    FAA["FAA Failure analysis agent"]
+    CTX["CTX Context assembler"]
+    MGW["MGW Model gateway"]
+    LLM["LLM Local inference server"]
+  end
+  subgraph SG_KNOW["Knowledge"]
+    IDX["IDX Repository intelligence"]
+    SPEC["SPEC Specification intelligence"]
+    RET["RET Hybrid retrieval"]
+    RULES["RULES Usage rules and policy store"]
+  end
+  subgraph SG_VAL["Validation"]
+    VAL["VAL Deterministic validation pipeline"]
+  end
+  subgraph SG_EXEC["Integration and execution"]
+    GIT["GIT GitLab connector and workspaces"]
+    TR["TR TestRail connector"]
+    CRED["CRED Credential broker"]
+    SCHED["SCHED Scheduler and SUT lock manager"]
+    RUN["RUN Execution worker"]
+    RES["RES Result collector"]
+  end
+  subgraph SG_DATA["Data and operations"]
+    DB[("DB PostgreSQL")]
+    ART[("ART Artifact store")]
+    JQ["JQ Job queue"]
+    AUD["AUD Audit and observability"]
+  end
+  XAP -->|"REST, SSE, tool calls"| GW
+  XCLI -->|"REST"| GW
+  GW --> IDP
+  IDP -->|"bind and group lookup"| XLDAP
+  GW -->|"commands and queries"| WF
+  WF -->|"job state"| DB
+  WF -->|"drafts and reports"| ART
+  WF --> APPR
+  APPR -->|"decisions"| DB
+  RULES -->|"GT6 maintainer approval"| APPR
+  WF --> INTAKE
+  WF --> GENA
+  WF --> MODA
+  WF --> REVA
+  WF --> FAA
+  INTAKE --> TR
+  TR -->|"fetch cases"| XTR
+  TR --> CRED
+  INTAKE & GENA & MODA & REVA & FAA --> CTX
+  INTAKE & GENA & MODA & REVA & FAA --> MGW
+  CTX --> RET
+  CTX --> IDX
+  CTX --> SPEC
+  CTX --> RULES
+  RET --> DB
+  IDX -->|"snapshots"| DB
+  IDX -->|"read only checkout"| GIT
+  SPEC -->|"registries"| DB
+  SPEC --> IDX
+  RULES --> DB
+  MGW -->|"local only"| LLM
+  WF -->|"validate proposal"| VAL
+  VAL --> IDX
+  VAL --> SPEC
+  VAL --> RULES
+  WF -->|"workspace, diff, commit"| GIT
+  GIT -->|"clone, push as user"| XGL
+  GIT --> CRED
+  WF -->|"enqueue run"| JQ
+  JQ --> SCHED
+  SCHED -->|"locks"| DB
+  SCHED --> RUN
+  RUN --> CRED
+  RUN -->|"SSH"| XSUT
+  RUN --> RES
+  RES --> ART
+  RES -->|"run records"| DB
+  RES -->|"run finished"| WF
+  XJEN -.->|"also uses, invisible to platform"| XSUT
+  GW & WF & APPR & GIT & CRED & RUN & MGW -.->|"events"| AUD
+  AUD --> DB
