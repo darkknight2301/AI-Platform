@@ -1,0 +1,5 @@
+config.yml
+reports/
+*.log
+__pycache__/
+*.egg-info/

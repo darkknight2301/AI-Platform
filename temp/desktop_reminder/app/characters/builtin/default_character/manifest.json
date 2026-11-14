@@ -1,7 +1,0 @@
-{
-  "id": "default_character",
-  "name": "Pebble (placeholder)",
-  "size": [160, 160],
-  "faces": "left",
-  "entry": "character.py"
-}

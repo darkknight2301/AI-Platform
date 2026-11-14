@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rmsum"
+version = "1.0.0"
+description = "Summarise and analyse Redmine tickets with a locally hosted LLM"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1",   # .xlsx export
+    "pyyaml>=6.0",     # YAML configuration
+]
+
+[project.scripts]
+rmsum = "rmsum.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

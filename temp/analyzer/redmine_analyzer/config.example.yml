@@ -1,0 +1,47 @@
+# Copy to config.yml and edit. Values may reference environment variables as ${NAME},
+# so secrets need not be stored in the file:  export REDMINE_API_KEY=...
+# Keep the real file private:  chmod 600 config.yml
+
+redmine:
+  url: https://redmine.example.com        # no trailing slash needed
+  api_key: ${REDMINE_API_KEY}             # My account -> API access key
+  timeout: 30                             # seconds per request
+  verify_ssl: true                        # false only for self-signed internal servers
+  page_size: 100                          # Redmine caps this at 100
+
+git:
+  # GitLab *project* URL. Used to link bare "!123", commits and branches:
+  #   {base_url}/-/merge_requests/123, /-/commit/<sha>, /-/tree/<branch>
+  # Leave empty to link only references that already appear as full URLs in tickets.
+  base_url: https://gitlab.example.com/group/project
+
+llm:
+  backend: ollama                         # see llm.py BACKENDS to add others
+  endpoint: http://localhost:11434
+  model: qwen3:27b                        # any tag you pulled, e.g. the Qwen Instruct 27B build
+  num_ctx: 16384                          # context window sent to Ollama; raise if you have VRAM
+  max_output_tokens: 3000                 # reserved for the reply when budgeting context
+  seed: 42                                # fixed seed + temperature 0 = repeatable output
+  timeout: 900                            # seconds; local 27B inference can be slow
+  think: null                             # true/false only if your model/Ollama supports it
+
+translate:
+  enabled: true
+  module: api                             # importable module exposing translate(text) -> str
+  include_original: true                  # also give the model the original Japanese paragraphs
+
+analysis:
+  max_depth: 2                            # hops from the root ticket (parent/child/relations)
+  max_tickets: 25                         # hard cap on tickets pulled into one analysis
+  follow_text_refs: false                 # also follow plain "#123" mentions (not just relations)
+  max_text_chars: 6000                    # a single description/comment is clipped beyond this
+
+cache:
+  path: ~/.cache/rmsum/cache.db
+
+output:
+  dir: ./reports
+
+logging:
+  level: INFO
+  file: rmsum.log                         # rotating file; empty string = console only

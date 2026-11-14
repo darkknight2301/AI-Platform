@@ -1,3 +1,0 @@
--r requirements.txt
-# The suite uses the standard library `unittest`; pytest is optional and also works.
-pytest>=7.4,<8.4
