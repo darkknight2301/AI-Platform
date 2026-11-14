@@ -6,7 +6,7 @@ import logging
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config import Config
@@ -186,7 +186,7 @@ class AnalysisService:
                 model=self._model.model_id,
                 prompt_version=PROMPT_VERSION,
                 mode=result.mode,
-                generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 redmine_url=self._settings.redmine_url,
                 fingerprint=fingerprint,
             ),

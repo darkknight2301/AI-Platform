@@ -135,7 +135,8 @@ class LoggingCfg:
     file: str = "rmsum.log"
 
     def __post_init__(self) -> None:
-        _check(self.level.upper() in logging.getLevelNamesMapping(), f"logging.level '{self.level}' is not valid")
+        # getLevelName returns an int for known level names and a "Level X" string otherwise
+        _check(isinstance(logging.getLevelName(self.level.upper()), int), f"logging.level '{self.level}' is not valid")
 
 
 @dataclass(frozen=True)

@@ -1,16 +1,16 @@
-# rmsum 2.0: Redmine ticket summarisation and analysis
+# rmsum 2.0.1: Redmine ticket summarisation and analysis
 
 Command-line tool that reads a Redmine ticket together with its parent, sub-tasks and related tickets and
 produces a **short summary** and a **detailed analysis** with a **locally hosted LLM** (Qwen 27B Instruct via
 Ollama, optionally on another machine over SSH). Reports: **HTML**, **Excel**, **JSON**, plus an **Excel audit log**.
 
-* Python **3.12+** only. Runtime dependencies: `openpyxl`, `pyyaml`; `paramiko` only for the SSH option.
+* Python **3.10.8 and 3.12+** (3.10 up to the newest release). Runtime dependencies: `openpyxl`, `pyyaml`; `paramiko` only for the SSH option.
 * No database, no external LLM API, no web UI. Configuration is one YAML file; interaction is `argparse`.
 
 ## Setup
 
 ```bash
-python3.12 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate     # Python 3.10 or newer
 pip install -e .            # add ".[ssh]" if Ollama runs on another machine
 cp config.example.yml config.yml && chmod 600 config.yml    # then edit it
 ```
@@ -88,20 +88,47 @@ reporting/     html, xlsx, audit, writer                               outputs
 config.py  errors.py  logging_setup.py  cli.py (the only place concrete classes are wired together)
 ```
 
+* **Facts by code, reasoning by the LLM.** Relations, ticket IDs, MRs, commits, branches, documents, URLs, attachment names are
+  extracted by code with their source journal. The model may mention nothing else.
+* **Validation.** Statements citing unknown tickets/MRs/commits are rejected (and listed); unknown source tags are removed;
+  "confirmed" without a valid source becomes `unverified`. Summary sentences get the same check.
+* **Resilience.** Retries with backoff for Redmine and Ollama (honours `Retry-After`); context overflow in direct mode falls back to
+  per-ticket analysis; a cut-off reply is retried with a brevity hint; a failing *related* ticket is left out with a warning instead of
+  losing the analysis; one failing ticket never stops a batch; reports and the audit log are written atomically.
+* **Large tickets.** Conversations are split chronologically into chunks that fit the context window; nothing is silently dropped.
+  Single texts above `analysis.max_text_chars` are clipped with an explicit marker and a warning.
+* **Prompt-injection hardening.** Ticket text sits between `<<<...>>>` markers, the markers are neutralised inside the text, and the
+  system prompt says to treat it as data. This reduces, not eliminates, the risk.
 * **Translation in batches.** All Japanese texts of an analysis go to `api.translate` in a few calls, joined by numbered markers.
   If the translator mangles the markers, that batch is redone text by text.
 
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v     # 97 tests, no extra packages needed
+python -m unittest discover -s tests -v     # 102 tests, no extra packages needed; run it on every Python you support
 pip install -e ".[dev]" && black .          # formatting: line length 120 (configured in pyproject.toml)
+python tools/check_compat.py                # static Python 3.10 compatibility check (run it with Python 3.12+)
 ```
+
+### Python 3.10 and 3.12 compatibility
+
+The code avoids everything newer than 3.10: no `type X = ...` statements (`TypeAlias` instead), no PEP 701 f-strings
+(no reused quotes, backslashes or comments inside `{...}`), no `datetime.UTC`, `enum.StrEnum` (a tested backport is in
+`domain/compat.py`), `logging.getLevelNamesMapping`, `TestCase.enterContext` and so on. Behaviour is identical on both:
+for instance enum members print as their value on 3.10 and 3.12 alike, so reports do not differ between interpreters.
+
+`tools/check_compat.py` fails the build if someone later introduces a 3.11+/3.12-only construct while developing on 3.12.
+Run `python -m unittest discover -s tests` under 3.10.8 as well as 3.12 before releasing.
 
 Add another LLM: implement `LanguageModel` (`generate`, `check_ready`, `model_id`, `context_tokens`, `max_output_tokens`) and register it in `BACKENDS`.
 
 ## Limitations (please read)
 
+* **Tested with fakes only.** No real Redmine, Ollama, SSH server or `api.translate` was available. The SSH tunnelling and HTTP logic
+  are tested against a real local HTTP server behind a fake SSH channel, but the actual paramiko login was not exercised. Run one
+  ticket you know well first and compare the result with it.
+* **Python 3.10 was verified statically, not by running it** (no 3.10 interpreter was available here): the compatibility checker, parsing with `feature_version=(3, 10)`, and the full test suite run on 3.12 with the 3.11+ APIs removed from the interpreter all pass. Please run the tests once on your 3.10.8 machine.
+* **Black was not run** (not installable offline here). The code is hand-formatted to its style at 120 columns; run `black .` once.
 * **Throughput.** Processing is sequential on purpose (one GPU is the bottleneck). A ticket needs 2 model calls when it fits the
   context window, otherwise one per related ticket plus 2. 100-200 tickets per day is feasible only if your model answers fast
   enough; use `keep_alive`, a sensible `num_ctx`, and a low `max_depth` to control cost, and check the audit log timings.

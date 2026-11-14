@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rmsum"
-version = "2.0.0"
+version = "2.0.1"
 description = "Summarise and analyse Redmine tickets with a locally hosted LLM"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "openpyxl>=3.1",  # .xlsx reports and the Excel audit log
     "pyyaml>=6.0",    # YAML configuration
@@ -25,4 +25,4 @@ where = ["src"]
 
 [tool.black]
 line-length = 120
-target-version = ["py312"]
+target-version = ["py310", "py311", "py312"]

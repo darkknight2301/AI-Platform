@@ -6,8 +6,9 @@ change another layer's data by accident (translation, for instance, never edits 
 
 import re
 from dataclasses import asdict, dataclass, field
-from enum import StrEnum
 from typing import Any, Mapping
+
+from .compat import StrEnum
 
 SCHEMA_VERSION = 2  # bump when the JSON layout of Analysis changes
 

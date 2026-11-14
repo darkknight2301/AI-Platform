@@ -122,7 +122,9 @@ class Base(unittest.TestCase):
     """TestCase with a temporary directory and a config pointing at the fakes."""
 
     def setUp(self) -> None:
-        self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)  # TestCase.enterContext needs Python 3.11
+        self.tmp = Path(directory.name)
 
     def config(self, **analysis: Any) -> Config:
         cfg = Config(redmine=RedmineCfg(url=REDMINE, api_key="key"), git=GitCfg(base_url=GIT))

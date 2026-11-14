@@ -9,6 +9,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from ..domain.budget import clip, estimate_tokens
 from ..domain.models import Claim, DroppedClaim, Fact, FactKind, Section
@@ -53,7 +54,7 @@ _DROP_ORDER = (
     Section.REQUIREMENTS,
 )
 
-type Digest = dict[Section, tuple[Claim, ...]]
+Digest: TypeAlias = dict[Section, tuple[Claim, ...]]
 
 
 @dataclass(frozen=True)
