@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from rmsum.config import Config, GitCfg, RedmineCfg
@@ -31,7 +31,7 @@ def load_sample() -> dict:
 class FakeRedmine:
     """Transport that serves the sample data and records the URLs requested."""
 
-    def __init__(self, data: dict | None = None) -> None:
+    def __init__(self, data: Optional[dict] = None) -> None:
         self.data = data or load_sample()
         self.calls: list[str] = []
 
@@ -39,7 +39,7 @@ class FakeRedmine:
         pass
 
     def request_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None, body: Any = None, timeout: float = 30.0
+        self, url: str, *, headers: Optional[Mapping[str, str]] = None, body: Any = None, timeout: float = 30.0
     ):
         self.calls.append(url)
         parsed = urlparse(url)
@@ -76,7 +76,7 @@ class FakeModel:
     def check_ready(self) -> None:
         pass
 
-    def reply(self, prompt: str, schema: Mapping[str, Any] | None) -> Completion:
+    def reply(self, prompt: str, schema: Optional[Mapping[str, Any]]) -> Completion:
         """Override in subclasses to script behaviour."""
         if schema is None:
             return Completion(
@@ -102,7 +102,7 @@ class FakeModel:
         }
         return Completion(json.dumps(sections), 500, 200)
 
-    def generate(self, system: str, prompt: str, schema: Mapping[str, Any] | None = None) -> Completion:
+    def generate(self, system: str, prompt: str, schema: Optional[Mapping[str, Any]] = None) -> Completion:
         self.prompts.append(prompt)
         return self.reply(prompt, schema)
 
@@ -152,7 +152,7 @@ class FakeOllamaTransport:
         self.chat_calls = 0
 
     def request_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None, body: Any = None, timeout: float = 30.0
+        self, url: str, *, headers: Optional[Mapping[str, str]] = None, body: Any = None, timeout: float = 30.0
     ):
         path = urlparse(url).path
         self.chat_calls += path == "/api/chat"
@@ -199,7 +199,7 @@ class FakeSshTransport:
         return True
 
     def open_channel(
-        self, kind: str, destination: tuple[str, int], source: tuple[str, int], timeout: float | None = None
+        self, kind: str, destination: tuple[str, int], source: tuple[str, int], timeout: Optional[float] = None
     ):
         assert kind == "direct-tcpip"
         self.targets.append(destination)

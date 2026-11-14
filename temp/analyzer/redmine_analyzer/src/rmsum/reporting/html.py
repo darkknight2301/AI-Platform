@@ -2,6 +2,7 @@
 
 import re
 from html import escape
+from typing import Optional
 
 from ..domain.models import Analysis, Claim, FactKind, TicketRef
 from ..domain.sections import RISK_SECTIONS, SECTION_INFO
@@ -35,7 +36,7 @@ details li{margin:6px 0}.src{font-size:.8rem;color:var(--mut)}.na{color:var(--mu
 _HIGH_PRIORITIES = {"high", "urgent", "immediate", "critical", "高", "緊急", "至急"}
 
 
-def _link(url: str | None, label: str) -> str:
+def _link(url: Optional[str], label: str) -> str:
     """Escaped ``label``, wrapped in an anchor when ``url`` is known."""
     if not url:
         return escape(label)

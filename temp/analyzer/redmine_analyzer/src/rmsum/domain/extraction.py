@@ -6,6 +6,7 @@ Everything here is regex/API driven, so the LLM never has to guess identifiers.
 import re
 from collections.abc import Iterable
 from urllib.parse import unquote
+from typing import Optional
 
 from .models import Fact, FactKind, Ticket
 
@@ -32,16 +33,16 @@ class _FactCollector:
     def __init__(self, redmine_url: str, git_url: str) -> None:
         self._redmine_url = redmine_url
         self._git_url = git_url
-        self._found: dict[tuple[FactKind, str], tuple[str | None, list[str]]] = {}
+        self._found: dict[tuple[FactKind, str], tuple[Optional[str], list[str]]] = {}
 
-    def add(self, kind: FactKind, value: str, tag: str, url: str | None = None) -> None:
+    def add(self, kind: FactKind, value: str, tag: str, url: Optional[str] = None) -> None:
         known_url, sources = self._found.setdefault((kind, value), (url, []))
         if url and not known_url:
             self._found[(kind, value)] = (url, sources)
         if tag not in sources:
             sources.append(tag)
 
-    def git(self, path: str) -> str | None:
+    def git(self, path: str) -> Optional[str]:
         """Link into the configured GitLab project, or None when no project URL is configured."""
         return f"{self._git_url}/-/{path}" if self._git_url else None
 

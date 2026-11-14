@@ -6,7 +6,7 @@ change another layer's data by accident (translation, for instance, never edits 
 
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from .compat import StrEnum
 
@@ -86,7 +86,7 @@ class Ticket:
     description: str = ""
     tracker: str = ""
     status: str = ""
-    closed: bool | None = None  # None = unknown (status lookup unavailable)
+    closed: Optional[bool] = None  # None = unknown (status lookup unavailable)
     priority: str = ""
     author: str = ""
     assignee: str = ""
@@ -96,7 +96,7 @@ class Ticket:
     url: str = ""
     custom_fields: Mapping[str, str] = field(default_factory=dict)
     journals: tuple[Journal, ...] = ()
-    parent_id: int | None = None
+    parent_id: Optional[int] = None
     children: tuple[int, ...] = ()
     relations: tuple[Relation, ...] = ()
     attachments: tuple[Attachment, ...] = ()
@@ -127,7 +127,7 @@ class Fact:
 
     kind: FactKind
     value: str
-    url: str | None
+    url: Optional[str]
     sources: tuple[str, ...]
 
 
@@ -146,10 +146,10 @@ class TicketRef:
 
     id: int
     subject: str
-    subject_en: str | None
+    subject_en: Optional[str]
     tracker: str
     status: str
-    closed: bool | None
+    closed: Optional[bool]
     priority: str
     assignee: str
     author: str
@@ -219,7 +219,7 @@ class Analysis:
         """Facts of the given kinds, in extraction order."""
         return [f for f in self.facts if f.kind in kinds]
 
-    def tag_url(self, tag: str) -> str | None:
+    def tag_url(self, tag: str) -> Optional[str]:
         """Redmine URL for a source tag such as ``#12`` or ``#12 J5`` (None if ``tag`` is not a tag)."""
         match = re.fullmatch(r"#(\d+)(?: J(\d+))?", tag)
         if not match:

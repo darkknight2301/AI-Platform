@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Callable, Collection
 from pathlib import Path
+from typing import Optional
 
 from ..domain.models import Analysis
 from .html import render_html
@@ -44,7 +45,7 @@ def write_reports(a: Analysis, directory: Path, formats: Collection[str]) -> lis
     return written
 
 
-def load_previous(path: Path) -> Analysis | None:
+def load_previous(path: Path) -> Optional[Analysis]:
     """Load a previously written JSON analysis; None if absent, unreadable or from an incompatible version."""
     try:
         return Analysis.from_dict(json.loads(path.read_text("utf-8")))

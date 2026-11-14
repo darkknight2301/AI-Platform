@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Iterator
 from itertools import islice
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlencode
 
 from ..config import RedmineCfg
@@ -41,8 +41,8 @@ class RedmineClient:
         self._transport = transport
         # Lookup tables are fetched lazily. They are memoised on success and on permanent failure (4xx),
         # but a transient failure is retried on the next ticket instead of poisoning the whole run.
-        self._statuses: dict[int, tuple[str, bool]] | None = None
-        self._priorities: dict[int, str] | None = None
+        self._statuses: Optional[dict[int, tuple[str, bool]]] = None
+        self._priorities: Optional[dict[int, str]] = None
 
     def _get(self, path: str, **params: Any) -> dict[str, Any]:
         url = f"{self._cfg.url}{path}" + (f"?{urlencode(params)}" if params else "")
@@ -93,7 +93,7 @@ class RedmineClient:
                 self._priorities = {}
         return self._priorities
 
-    def search(self, query: str, project: str | None, status: str, limit: int) -> list[Ticket]:
+    def search(self, query: str, project: Optional[str], status: str, limit: int) -> list[Ticket]:
         """Find tickets by numeric id or subject substring (lightweight: no journals).
 
         ``status`` is ``open``, ``closed`` or ``all``.

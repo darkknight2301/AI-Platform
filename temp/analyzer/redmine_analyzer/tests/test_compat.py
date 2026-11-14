@@ -47,6 +47,10 @@ class CompatibilityCheckerTests(unittest.TestCase):
             'print(f"{"nested"}")\n': "reuses",
             "print(f'''{\n  1 # comment\n}''')\n": "comment",
             "try:\n    pass\nexcept* ValueError:\n    pass\n": "except*",
+            "def f(x: float | None = None): pass\n": "union",
+            "def f() -> dict[str, int | None]: pass\n": "union",
+            "Alias = str | int\n": "union",
+            "class C:\n    retry_after: float | None = None\n": "union",
         }
         for source, expected in cases.items():
             with self.subTest(source):
@@ -60,6 +64,10 @@ class CompatibilityCheckerTests(unittest.TestCase):
             'print(f"line\\n{1 + 1}")\n'
         )
         self.assertEqual(self.problems(source), [])
+
+    def test_real_set_and_bit_operations_are_not_reported(self):
+        self.assertEqual(self.problems("a = {1}\nb = set(a) | {2} | {x for x in a}\nflags = 1 | 2\n"), [])
+        self.assertEqual(self.problems("def f(x: Optional[float] = None) -> Union[int, str]: pass\n"), [])
 
     def test_the_project_itself_is_clean(self):
         import check_compat

@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Optional
 
 from .adapters.ollama import create_model
 from .adapters.redmine import RedmineClient
@@ -98,7 +99,7 @@ class Runtime:
     llm_location: str  # where the model runs, for the audit log (never credentials)
 
 
-def _redmine_transport(cfg: Config, override: Transport | None, stack: ExitStack) -> Transport:
+def _redmine_transport(cfg: Config, override: Optional[Transport], stack: ExitStack) -> Transport:
     transport = override or RetryingTransport(UrllibTransport(cfg.redmine.verify_ssl), cfg.redmine.retries)
     stack.callback(transport.close)
     return transport
@@ -107,7 +108,7 @@ def _redmine_transport(cfg: Config, override: Transport | None, stack: ExitStack
 def _llm_runtime(
     cfg: Config,
     use_ssh: bool,
-    override: Transport | None,
+    override: Optional[Transport],
     prompter: CredentialPrompter,
     connector: Connector,
     redactor: SecretRedactor,
@@ -209,11 +210,11 @@ def _analyze(args: argparse.Namespace, cfg: Config, runtime: Runtime) -> int:
 
 
 def main(
-    argv: Sequence[str] | None = None,
+    argv: Optional[Sequence[str]] = None,
     *,
-    redmine_transport: Transport | None = None,
-    llm_transport: Transport | None = None,
-    prompter: CredentialPrompter | None = None,
+    redmine_transport: Optional[Transport] = None,
+    llm_transport: Optional[Transport] = None,
+    prompter: Optional[CredentialPrompter] = None,
     ssh_connector: Connector = connect_paramiko,
 ) -> int:
     """Entry point; returns the process exit code (0 ok, 1 failures, 130 interrupted).

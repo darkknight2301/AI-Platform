@@ -9,7 +9,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Optional
 
 from ..domain.budget import clip, estimate_tokens
 from ..domain.models import Claim, DroppedClaim, Fact, FactKind, Section
@@ -54,7 +54,7 @@ _DROP_ORDER = (
     Section.REQUIREMENTS,
 )
 
-Digest: TypeAlias = dict[Section, tuple[Claim, ...]]
+Digest = dict[Section, tuple[Claim, ...]]
 
 
 @dataclass(frozen=True)
@@ -71,9 +71,9 @@ class PipelineResult:
 def facts_text(
     graph: TicketGraph,
     facts: Sequence[Fact],
-    only: int | None = None,
+    only: Optional[int] = None,
     limit: int = 40,
-    titles: Mapping[int, str] | None = None,
+    titles: Optional[Mapping[int, str]] = None,
 ) -> str:
     """Render the FACTS block of a prompt: all tickets, or only the facts found in ticket ``only``.
 
@@ -160,7 +160,7 @@ class AnalysisPipeline:
         graph: TicketGraph,
         facts: Sequence[Fact],
         rendered: Mapping[int, RenderedTicket],
-        titles: Mapping[int, str] | None = None,
+        titles: Optional[Mapping[int, str]] = None,
     ) -> PipelineResult:
         """Analyse the graph. ``titles`` maps ticket ids to display subjects (English when translated).
 
@@ -196,7 +196,7 @@ class _Run:
         budget = self._budget(SYSTEM_JSON, consolidate_prompt(root, facts_block, ""))
         full_texts = [r.text() for r in rendered.values()]
 
-        sections: Digest | None = None
+        sections: Optional[Digest] = None
         mode = "direct"
         if sum(estimate_tokens(t) for t in full_texts) <= budget:
             try:

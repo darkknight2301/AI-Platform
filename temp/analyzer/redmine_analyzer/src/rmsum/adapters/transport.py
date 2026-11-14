@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Optional
 
 from ..errors import TransportError
 from ..ports import Transport
@@ -21,14 +21,14 @@ class UrllibTransport:
     """JSON over HTTP(S) using only the standard library."""
 
     def __init__(self, verify_ssl: bool = True) -> None:
-        self._context: ssl.SSLContext | None = None
+        self._context: Optional[ssl.SSLContext] = None
         if not verify_ssl:
             self._context = ssl.create_default_context()
             self._context.check_hostname = False
             self._context.verify_mode = ssl.CERT_NONE
 
     def request_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None, body: Any = None, timeout: float = 30.0
+        self, url: str, *, headers: Optional[Mapping[str, str]] = None, body: Any = None, timeout: float = 30.0
     ) -> Any:
         data = json.dumps(body).encode() if body is not None else None
         all_headers = {"Accept": "application/json", **({"Content-Type": "application/json"} if data else {})}
@@ -47,7 +47,7 @@ class UrllibTransport:
         """Nothing to release: every request opens its own connection."""
 
 
-def _retry_after(exc: urllib.error.HTTPError) -> float | None:
+def _retry_after(exc: urllib.error.HTTPError) -> Optional[float]:
     """Seconds from a numeric ``Retry-After`` header (HTTP-date form is ignored)."""
     value = exc.headers.get("Retry-After") if exc.headers else None
     try:
@@ -76,7 +76,7 @@ class RetryingTransport:
         self._sleep = sleep
 
     def request_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None, body: Any = None, timeout: float = 30.0
+        self, url: str, *, headers: Optional[Mapping[str, str]] = None, body: Any = None, timeout: float = 30.0
     ) -> Any:
         for attempt in range(1, self._attempts + 1):
             try:

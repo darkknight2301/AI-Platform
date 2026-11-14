@@ -8,7 +8,7 @@ import logging
 import os
 from dataclasses import MISSING, dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Union
 
 import yaml
 
@@ -55,7 +55,7 @@ class LlmCfg:
     max_output_tokens: int = 3000
     seed: int = 42
     timeout: float = 900.0
-    think: bool | None = None  # None = do not send the option
+    think: Optional[bool] = None  # None = do not send the option
     keep_alive: str = "30m"  # keeps the 27B model loaded between tickets
     retries: int = 2
 
@@ -196,7 +196,7 @@ def _build_section(cls: type, data: Any, section: str) -> Any:
     return cls(**kwargs)
 
 
-def load_config(path: str | Path) -> Config:
+def load_config(path: Union[str, Path]) -> Config:
     """Load and validate a YAML configuration file.
 
     String values may reference environment variables as ``${NAME}``.

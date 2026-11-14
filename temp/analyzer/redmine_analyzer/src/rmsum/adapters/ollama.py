@@ -3,7 +3,7 @@
 import logging
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Optional
 
 from ..config import LlmCfg
 from ..errors import ContextOverflowError, LLMError, TransportError
@@ -18,7 +18,7 @@ OVERFLOW_MARGIN_TOKENS = 16
 class OllamaModel:
     """Ollama ``/api/chat`` with deterministic sampling and an explicit context window."""
 
-    def __init__(self, cfg: LlmCfg, transport: Transport, endpoint: str | None = None) -> None:
+    def __init__(self, cfg: LlmCfg, transport: Transport, endpoint: Optional[str] = None) -> None:
         self._cfg = cfg
         self._transport = transport
         self._endpoint = (endpoint or cfg.endpoint).rstrip("/")
@@ -45,7 +45,7 @@ class OllamaModel:
         if wanted not in names and (":" in wanted or f"{wanted}:latest" not in names):
             raise LLMError(f"model '{wanted}' is not installed on the Ollama server (installed: {sorted(names)})")
 
-    def generate(self, system: str, prompt: str, schema: Mapping[str, Any] | None = None) -> Completion:
+    def generate(self, system: str, prompt: str, schema: Optional[Mapping[str, Any]] = None) -> Completion:
         """Run one chat completion (temperature 0, fixed seed) and return text plus usage."""
         cfg = self._cfg
         body: dict[str, Any] = {
@@ -88,7 +88,7 @@ class OllamaModel:
 BACKENDS = {"ollama": OllamaModel}
 
 
-def create_model(cfg: LlmCfg, transport: Transport, endpoint: str | None = None) -> LanguageModel:
+def create_model(cfg: LlmCfg, transport: Transport, endpoint: Optional[str] = None) -> LanguageModel:
     """Create the backend named by ``cfg.backend``. Register new backends in ``BACKENDS``."""
     try:
         return BACKENDS[cfg.backend](cfg, transport, endpoint)

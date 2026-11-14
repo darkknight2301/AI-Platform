@@ -14,7 +14,7 @@ import os
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 from ..config import SshCfg
@@ -99,7 +99,7 @@ class SshTransport:
         return transport
 
     def request_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None, body: Any = None, timeout: float = 30.0
+        self, url: str, *, headers: Optional[Mapping[str, str]] = None, body: Any = None, timeout: float = 30.0
     ) -> Any:
         target = urlparse(url)
         host, port = target.hostname or self._cfg.remote_host, target.port or 80
@@ -172,7 +172,7 @@ class CredentialPrompter:
         user = self._required("SSH username", defaults.username)
         return SshCredentials(host, user, self.ask_secret(f"SSH password for {user}@{host}: "))
 
-    def new_password(self, creds: SshCredentials) -> SshCredentials | None:
+    def new_password(self, creds: SshCredentials) -> Optional[SshCredentials]:
         """Ask again after a rejected password; None when no terminal is available."""
         if not self.interactive():
             return None

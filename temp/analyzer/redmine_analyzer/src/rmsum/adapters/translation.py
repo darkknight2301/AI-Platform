@@ -9,6 +9,7 @@ import importlib
 import logging
 import re
 from collections.abc import Callable, Iterator, Mapping
+from typing import Optional
 
 from ..config import TranslateCfg
 
@@ -51,7 +52,7 @@ class BatchTranslator:
         if batch:
             yield batch
 
-    def _call(self, text: str) -> str | None:
+    def _call(self, text: str) -> Optional[str]:
         """One call to the translate API; None on any failure (the external API may raise anything)."""
         try:
             out = self._fn(text)
@@ -70,7 +71,7 @@ class BatchTranslator:
         return {text: out for text, out in singles.items() if out is not None}
 
     @staticmethod
-    def _split(output: str, expected: int) -> list[str] | None:
+    def _split(output: str, expected: int) -> Optional[list[str]]:
         """Split a batch reply on its markers; None unless every marker came back once, in order, with text."""
         pieces = _MARKER_RE.split(output)
         indices, bodies = pieces[1::2], [p.strip() for p in pieces[2::2]]
@@ -79,7 +80,7 @@ class BatchTranslator:
         return bodies
 
 
-def load_translator(cfg: TranslateCfg) -> BatchTranslator | None:
+def load_translator(cfg: TranslateCfg) -> Optional[BatchTranslator]:
     """Import ``<cfg.module>.translate``; returns None (with a warning) when translation is off or unavailable."""
     if not cfg.enabled:
         return None

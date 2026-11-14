@@ -1,7 +1,7 @@
 """Excel report: Short Summary, Detailed Analysis, Related Tickets, MR References, Open Issues, Other References."""
 
 from pathlib import Path
-from typing import TypeAlias
+from typing import Optional, Union
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -10,7 +10,7 @@ from ..domain.models import Analysis, FactKind
 from ..domain.sections import RISK_SECTIONS, SECTION_INFO
 
 # A cell is plain text/number, or (text, url) for a hyperlink.
-Cell: TypeAlias = str | int | float | tuple[str, str | None]
+Cell = Union[str, int, float, tuple[str, Optional[str]]]
 
 HEADER_FILL = PatternFill("solid", fgColor="1F3864")
 NO_DATA = "None found in ticket data"

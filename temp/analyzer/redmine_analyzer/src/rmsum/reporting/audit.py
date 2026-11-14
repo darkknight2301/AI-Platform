@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from openpyxl import Workbook, load_workbook
 
@@ -69,11 +70,11 @@ class AuditEntry:
 class AuditLog:
     """Appends entries to an Excel workbook. An empty path disables the log."""
 
-    def __init__(self, path: Path | None, user: str | None = None) -> None:
+    def __init__(self, path: Optional[Path], user: Optional[str] = None) -> None:
         self._path = path
         self._user = user or _current_user()
 
-    def record(self, entry: AuditEntry) -> Path | None:
+    def record(self, entry: AuditEntry) -> Optional[Path]:
         """Append ``entry``. Never raises: an audit problem must not abort the analysis (it is logged instead).
 
         Returns the file written, or None when disabled or when writing failed.

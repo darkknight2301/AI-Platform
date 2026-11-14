@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from .domain.models import Ticket
 
@@ -11,7 +11,7 @@ class Transport(Protocol):
     """JSON over HTTP. Implementations: plain urllib, SSH-tunnelled, and a retrying decorator."""
 
     def request_json(
-        self, url: str, *, headers: Mapping[str, str] | None = None, body: Any = None, timeout: float = 30.0
+        self, url: str, *, headers: Optional[Mapping[str, str]] = None, body: Any = None, timeout: float = 30.0
     ) -> Any:
         """GET, or POST when ``body`` is given. Raises TransportError on any failure."""
         ...
@@ -28,7 +28,7 @@ class IssueSource(Protocol):
         """Fetch one ticket with conversation, relations, children and attachment names."""
         ...
 
-    def search(self, query: str, project: str | None, status: str, limit: int) -> list[Ticket]:
+    def search(self, query: str, project: Optional[str], status: str, limit: int) -> list[Ticket]:
         """Find tickets by numeric id or subject text (without conversations)."""
         ...
 
@@ -38,8 +38,8 @@ class Completion:
     """One model reply plus what the backend reported about it."""
 
     text: str
-    prompt_tokens: int | None = None
-    output_tokens: int | None = None
+    prompt_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
     truncated: bool = False  # the reply hit the output-token limit and is incomplete
 
 
@@ -54,7 +54,7 @@ class LanguageModel(Protocol):
         """Fail fast if the backend is unreachable or the configured model is unavailable. Raises LLMError."""
         ...
 
-    def generate(self, system: str, prompt: str, schema: Mapping[str, Any] | None = None) -> Completion:
+    def generate(self, system: str, prompt: str, schema: Optional[Mapping[str, Any]] = None) -> Completion:
         """Generate a reply; with ``schema`` the reply must be a JSON object matching it.
 
         Raises:

@@ -4,6 +4,8 @@ Every failure the tool anticipates derives from :class:`RmsumError`, so the CLI 
 line and continue with the next ticket instead of showing a traceback.
 """
 
+from typing import Optional
+
 
 class RmsumError(Exception):
     """Base class for expected, user-reportable failures."""
@@ -16,7 +18,7 @@ class ConfigError(RmsumError):
 class TransportError(RmsumError):
     """HTTP or network failure. ``status`` is 0 for failures below HTTP (DNS, timeout, SSH)."""
 
-    def __init__(self, message: str, status: int = 0, retry_after: float | None = None) -> None:
+    def __init__(self, message: str, status: int = 0, retry_after: Optional[float] = None) -> None:
         super().__init__(f"HTTP {status}: {message}" if status else message)
         self.status = status
         self.retry_after = retry_after

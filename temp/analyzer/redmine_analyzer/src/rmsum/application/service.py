@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from ..config import Config
 from ..domain.extraction import extract_facts
@@ -80,7 +80,7 @@ class MeteredModel:
         self.output_tokens = 0
         self.seconds = 0.0
 
-    def generate(self, system: str, prompt: str, schema: Mapping[str, Any] | None = None) -> Completion:
+    def generate(self, system: str, prompt: str, schema: Optional[Mapping[str, Any]] = None) -> Completion:
         started = time.monotonic()
         try:
             completion = self._inner.generate(system, prompt, schema)
@@ -108,7 +108,7 @@ class AnalysisService:
         self,
         source: IssueSource,
         model: LanguageModel,
-        translator: TextTranslator | None,
+        translator: Optional[TextTranslator],
         settings: AnalysisSettings,
     ) -> None:
         self._source = source
@@ -123,7 +123,7 @@ class AnalysisService:
             redmine_url=settings.redmine_url,
         )
 
-    def analyze(self, root_id: int, previous: Analysis | None = None) -> AnalysisOutcome:
+    def analyze(self, root_id: int, previous: Optional[Analysis] = None) -> AnalysisOutcome:
         """Analyse ``root_id`` and its related tickets.
 
         The ticket graph is always re-fetched (cheap compared with LLM time) so changes are detected: if

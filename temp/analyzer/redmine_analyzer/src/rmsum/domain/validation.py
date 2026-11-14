@@ -8,7 +8,7 @@ is worse than a missing statement. Validation cannot detect false prose that cit
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from .extraction import MR, TICKET
 from .models import Basis, Claim, DroppedClaim, Section
@@ -41,7 +41,7 @@ class ClaimValidator:
     def __init__(self, known: KnownReferences) -> None:
         self._known = known
 
-    def check_text(self, text: str) -> str | None:
+    def check_text(self, text: str) -> Optional[str]:
         """Return why ``text`` must be rejected (it names an unknown identifier), or None if it is acceptable."""
         for number in TICKET.findall(text):
             if int(number) not in self._known.ticket_ids:
@@ -55,7 +55,7 @@ class ClaimValidator:
                 return f"unknown commit {word[:7]}"
         return None
 
-    def normalise_tag(self, raw: str) -> str | None:
+    def normalise_tag(self, raw: str) -> Optional[str]:
         """Canonical ``#N`` / ``#N Jm`` form of a model-written source tag, or None if it does not exist."""
         match = _TAG.search(raw)
         if not match:
@@ -63,7 +63,7 @@ class ClaimValidator:
         tag = f"#{match[1]} J{match[2]}" if match[2] else f"#{match[1]}"
         return tag if tag in self._known.tags else None
 
-    def _claim(self, item: Any) -> tuple[Claim | None, str]:
+    def _claim(self, item: Any) -> tuple[Optional[Claim], str]:
         """Validate one raw claim; returns ``(claim, "")`` or ``(None, reason)``."""
         if isinstance(item, str):
             item = {"text": item}

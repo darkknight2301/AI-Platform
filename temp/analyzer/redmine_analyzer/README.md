@@ -1,4 +1,4 @@
-# rmsum 2.0.1: Redmine ticket summarisation and analysis
+# rmsum 2.0.2: Redmine ticket summarisation and analysis
 
 Command-line tool that reads a Redmine ticket together with its parent, sub-tasks and related tickets and
 produces a **short summary** and a **detailed analysis** with a **locally hosted LLM** (Qwen 27B Instruct via
@@ -105,14 +105,16 @@ config.py  errors.py  logging_setup.py  cli.py (the only place concrete classes 
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v     # 102 tests, no extra packages needed; run it on every Python you support
+python -m unittest discover -s tests -v     # 103 tests, no extra packages needed; run it on every Python you support
 pip install -e ".[dev]" && black .          # formatting: line length 120 (configured in pyproject.toml)
 python tools/check_compat.py                # static Python 3.10 compatibility check (run it with Python 3.12+)
 ```
 
 ### Python 3.10 and 3.12 compatibility
 
-The code avoids everything newer than 3.10: no `type X = ...` statements (`TypeAlias` instead), no PEP 701 f-strings
+The code avoids everything newer than 3.10: type hints use `Optional[...]` / `Union[...]` from `typing` instead of the
+`X | Y` syntax (so a tool or interpreter that does not understand `float | None` is no problem), no `type X = ...`
+statements, no PEP 701 f-strings
 (no reused quotes, backslashes or comments inside `{...}`), no `datetime.UTC`, `enum.StrEnum` (a tested backport is in
 `domain/compat.py`), `logging.getLevelNamesMapping`, `TestCase.enterContext` and so on. Behaviour is identical on both:
 for instance enum members print as their value on 3.10 and 3.12 alike, so reports do not differ between interpreters.

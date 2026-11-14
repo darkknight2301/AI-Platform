@@ -6,7 +6,8 @@ Execute it with Python 3.12 or newer (the 3.12 tokenizer is needed to look insid
 
 It cannot replace running the test suite on 3.10, but it finds the mistakes that are easy to make
 while developing on 3.12: PEP 695 ``type`` statements, PEP 701 f-strings (reused quotes, backslashes
-or comments inside ``{...}``), ``except*``, and standard-library names added in 3.11/3.12.
+or comments inside ``{...}``), ``except*``, ``X | Y`` unions in type hints (``Optional``/``Union`` are used
+instead, they work on every Python 3 release), and standard-library names added in 3.11/3.12.
 """
 
 import ast
@@ -34,12 +35,38 @@ NEWER_APIS = re.compile(
 ALLOWED_FILES = {"check_compat.py", "compat.py", "test_compat.py"}
 
 
+def _type_like(node: ast.AST) -> bool:
+    """True for what a type hint is made of: names, dotted names, subscripts of those, None, forward-ref strings."""
+    if isinstance(node, ast.Name):
+        return True
+    if isinstance(node, ast.Constant):
+        return node.value is None or isinstance(node.value, str)
+    if isinstance(node, ast.Attribute):
+        return _type_like(node.value)
+    if isinstance(node, ast.Subscript):
+        return _type_like(node.value)
+    return False
+
+
+def _union_operands(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _union_operands(node.left) + _union_operands(node.right)
+    return [node]
+
+
 def syntax_problems(path: Path, source: str) -> list[str]:
-    """PEP 695 / PEP 654 syntax found through the AST."""
+    """PEP 604 / PEP 695 / PEP 654 syntax found through the AST.
+
+    ``X | Y`` is reported only when every operand looks like a type, so ``set(a) | {1}`` and ``1 | 2`` pass.
+    (A bitwise OR of two plain names would be reported too; the project has none.)
+    """
     problems = []
     for node in ast.walk(ast.parse(source)):
         line = getattr(node, "lineno", 0)
-        if isinstance(node, ast.TypeAlias):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            if all(_type_like(o) for o in _union_operands(node)):
+                problems.append(f"{path}:{line}: 'X | Y' union in a type hint or alias; use typing.Optional / Union")
+        elif isinstance(node, ast.TypeAlias):
             problems.append(f"{path}:{line}: 'type X = ...' statement needs Python 3.12 (use typing.TypeAlias)")
         elif isinstance(node, ast.TryStar):
             problems.append(f"{path}:{line}: 'except*' needs Python 3.11")
@@ -98,6 +125,7 @@ def main() -> int:
         for number, text in enumerate(source.splitlines(), 1):
             if path.name not in ALLOWED_FILES and NEWER_APIS.search(text):
                 problems.append(f"{rel}:{number}: uses an API newer than Python 3.10: {text.strip()[:80]}")
+    problems = list(dict.fromkeys(problems))  # a union nested in a union is reported once per line
     for problem in problems:
         print(problem)
     print(f"{len(problems)} Python 3.10 compatibility problem(s) found")

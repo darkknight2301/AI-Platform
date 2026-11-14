@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Optional
 
 from ..domain.budget import clip, estimate_tokens
 from ..domain.language import has_japanese, japanese_paragraphs
@@ -53,7 +54,7 @@ class RenderedTicket:
         return "\n".join([self.header, *self.journal_blocks])
 
 
-def _body(text: str, english: str | None, include_original: bool) -> str:
+def _body(text: str, english: Optional[str], include_original: bool) -> str:
     """Prompt form of a text: translation (plus the Japanese paragraphs) or an untranslated marker."""
     if not text:
         return ""
