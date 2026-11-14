@@ -1,116 +1,111 @@
-# rmsum: Redmine ticket summarisation and analysis
+# rmsum 2.0: Redmine ticket summarisation and analysis
 
-Command-line tool that reads a Redmine ticket together with its parent, sub-tasks and related
-tickets, and produces a **short summary** and a **detailed analysis** using a **locally hosted LLM**
-(Qwen 27B Instruct through Ollama). Reports are written as **HTML**, **Excel** and **JSON**.
+Command-line tool that reads a Redmine ticket together with its parent, sub-tasks and related tickets and
+produces a **short summary** and a **detailed analysis** with a **locally hosted LLM** (Qwen 27B Instruct via
+Ollama, optionally on another machine over SSH). Reports: **HTML**, **Excel**, **JSON**, plus an **Excel audit log**.
 
-* Python **3.12+** only. Runtime dependencies: **`openpyxl`** (xlsx export) and **`pyyaml`** (YAML config). Everything else is the standard library (`urllib`, `sqlite3`, `argparse`, `logging`, `unittest`).
-* No external LLM APIs. No web UI: configuration is a `.yml` file, interaction is `argparse`.
+* Python **3.12+** only. Runtime dependencies: `openpyxl`, `pyyaml`; `paramiko` only for the SSH option.
+* No database, no external LLM API, no web UI. Configuration is one YAML file; interaction is `argparse`.
 
 ## Setup
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-ollama pull qwen3:27b            # or the exact Qwen 27B Instruct tag you use
-cp config.example.yml config.yml # then edit; chmod 600 config.yml
-export REDMINE_API_KEY=...       # referenced as ${REDMINE_API_KEY} in config.yml
+pip install -e .            # add ".[ssh]" if Ollama runs on another machine
+cp config.example.yml config.yml && chmod 600 config.yml    # then edit it
 ```
 
-Redmine: enable *Administration → Settings → API → Enable REST web service*, and use an API key of a
-user who can see the tickets.
+On the machine that runs Ollama: `ollama pull qwen3:27b` (or your exact Qwen 27B Instruct tag; put it in `llm.model`).
+In Redmine enable *Administration, Settings, API, Enable REST web service* and use an API key that can see the tickets.
 
-Translation: `translate.module` (default `api`) must be importable and expose `translate(text) -> str`
-(synchronous). If it cannot be imported, translation is disabled with a warning and Japanese text is
-analysed untranslated (flagged in the report). Use `--no-translate` to skip it.
+`translate.module` (default `api`) must be importable and expose a synchronous `translate(text) -> str`. If it cannot be
+imported, translation is switched off with a warning and Japanese text is analysed untranslated (flagged in the report).
 
 ## Usage
 
 ```bash
-rmsum search "login"                          # find tickets by subject (or: rmsum search 1234)
-rmsum search login --project web --status all --limit 50
-
-rmsum analyze 1234                            # writes reports/redmine_1234.html and .xlsx
-rmsum analyze 1234 1250 -f html xlsx json -o out/
-rmsum analyze 1234 --regenerate               # ignore cache, analyse again
-rmsum analyze 1234 --max-depth 3 --max-tickets 40
-rmsum -c /path/other.yml -v analyze 1234      # other config, debug logging
+rmsum search "login" --status all
+rmsum analyze 1234                              # html, xlsx and json in ./reports
+rmsum analyze 1234 1250 -f html                 # json is always written (see "Re-runs")
+rmsum analyze --from-file today.txt             # 100-200 ids: one per line, '#' or '//' comments allowed
+rmsum analyze 1234 --regenerate                 # analyse again even if nothing changed
+rmsum analyze 1234 --max-depth 3 --max-tickets 40 --no-translate
+rmsum -c other.yml -v analyze 1234
 ```
 
-`python -m rmsum ...` works too. The terminal shows the short summary, warnings and output paths.
-Exit code is 1 if any ticket failed (others are still processed).
+The terminal shows each short summary, warnings and file paths, and for several tickets a final success count.
+Exit code: `0` all succeeded, `1` at least one ticket failed (the others still ran), `130` interrupted with Ctrl-C.
 
-### Output
+### Ollama on another machine (SSH)
 
-| Format | Content |
+Set `ssh.enabled: true` (or pass `--ssh`). **When a run starts** you are asked, once:
+
+```
+Ollama server IP / hostname [192.168.1.50]:        <- Enter accepts the default from config.yml
+SSH username [llmuser]:
+SSH password for llmuser@192.168.1.50:             <- hidden, three tries
+```
+
+* The IP, user name and password are held in memory for the run only. **There is no password key in the YAML**
+  (a `password:` entry is rejected with an explanation). Only non-secret defaults (host, username, port) live there.
+* The password is used solely to log in over SSH. It is never sent to Ollama, never placed in a prompt, report, audit log
+  or JSON file, and log output is filtered to mask it (verified by the tests).
+* HTTP to Ollama is carried inside the SSH connection: no local port is opened, nothing but Ollama is needed remotely.
+* Unknown host keys are rejected unless `ssh.trust_unknown_host: true`, because an impostor server could capture the
+  password. Run `ssh user@host` once to add the host to `~/.ssh/known_hosts`.
+* Without a terminal (cron/CI) the values come from `RMSUM_SSH_HOST`, `RMSUM_SSH_USER`, `RMSUM_SSH_PASSWORD`; if they
+  are missing the run stops with a clear message instead of hanging.
+* Before the first ticket the tool checks that Ollama answers and that `llm.model` is installed there, so a typo fails
+  immediately, not after 40 minutes.
+
+## Output
+
+| File | Content |
 |---|---|
-| **HTML** | Self-contained, no JavaScript. Header with status/priority badges, short summary, risk chips, 12 expandable analysis sections (blockers/contradictions highlighted), related-ticket table, MR/commit/branch table, documents/links/attachments table, warnings. Every ticket, journal, MR and URL is a link. Light/dark aware. |
-| **Excel** | Sheets: *Short Summary*, *Detailed Analysis*, *Related Tickets*, *MR References* (MR, commit, branch), *Open Issues*, *Other References* (documents, URLs, attachment names, ticket mentions). Hyperlinked, filterable, formula-injection safe. |
-| **JSON** | The complete `Analysis` object (what the cache stores). |
+| `redmine_<id>.html` | Self-contained, no JavaScript. Status/priority badges, short summary, risk chips, 12 expandable sections (blockers, contradictions, requirement changes highlighted), related tickets, MR/commit/branch table, documents and attachment names, warnings, and the statements that validation rejected. Every ticket, journal and MR is a link. |
+| `redmine_<id>.xlsx` | *Short Summary*, *Detailed Analysis*, *Related Tickets*, *MR References* (MR, commit, branch), *Open Issues*, *Other References*. Hyperlinked, filterable, formula-injection safe. |
+| `redmine_<id>.json` | Complete analysis (schema v2). Also the stored state for re-runs. |
+| `audit_log.xlsx` | One row per ticket per run: time, OS user, ticket, outcome (`ANALYSED`, `REUSED`, `FAILED`), tickets analysed/skipped, mode, model, LLM calls, tokens, warnings, rejected statements, timings (fetch/translate/LLM/total), where the model ran, files written, error text. Appended after every ticket, so a crash loses nothing. No credentials, no ticket text beyond the subject. |
 
-Source tags: `#1234` = ticket (subject, description, fields), `#1234 J56` = journal 56 of ticket 1234; both link to Redmine.
+Source tags: `#1234` is a ticket, `#1234 J56` is journal 56 of ticket 1234; both link into Redmine.
 
-## How it works
+### Re-runs
+
+There is no cache database. Each run re-fetches the ticket graph (cheap) and compares a fingerprint of every ticket's
+`updated_on` plus every setting that influences the result (model, depth, limits, git URL, prompt version, ...) with the
+`redmine_<id>.json` already in the output folder. Same fingerprint: the stored analysis is reused (reports are rewritten,
+no LLM call, audit outcome `REUSED`). Any ticket or setting changed: analysed again. `--regenerate` always re-analyses.
+Delete the JSON to force it for one ticket. Translations are not cached across runs.
+
+## Architecture
 
 ```
-CLI ─► graph.py (BFS over parent/children/relations, visited-set, depth + size caps)
-    ─► translate.py (Japanese paragraphs only; cached)      ─► extract.py (regex facts + source tags)
-    ─► context.py (render, token budget, chronological chunks)
-    ─► analyzer.py: [pass 1 per ticket, only if too big] ─► pass 2 consolidated analysis ─► pass 3 short summary
-    ─► validation ─► cache.py ─► export_html.py / export_xlsx.py / JSON
+domain/        models (frozen), extraction, validation, budgeting      pure, no I/O
+ports.py       Transport, IssueSource, LanguageModel, TextTranslator   interfaces
+adapters/      transport (urllib + retry), ssh, redmine, ollama, translation
+application/   graph, render, prompts, pipeline, service               use cases
+reporting/     html, xlsx, audit, writer                               outputs
+config.py  errors.py  logging_setup.py  cli.py (the only place concrete classes are wired together)
 ```
 
-**Facts by code, reasoning by the LLM.** Ticket relations come from the Redmine API; ticket IDs, MR IDs
-(`!123`, `MR 123`, `/merge_requests/123`, `/pull/123`), commits, branches, documents, URLs and attachment
-filenames come from regexes and carry the journal they were found in. The model receives them as a FACTS
-block and is told it may mention no other identifier.
+* **Translation in batches.** All Japanese texts of an analysis go to `api.translate` in a few calls, joined by numbered markers.
+  If the translator mangles the markers, that batch is redone text by text.
 
-**Validation of model output.** Each statement has a basis: `confirmed` (with source tags), `assumption`,
-or `unverified` (the model claimed "confirmed" but its tags do not exist). Unknown source tags are removed;
-statements naming a ticket, MR or commit that is not in the extracted data are dropped, and the number
-dropped is shown as a warning. Summary sentences are checked the same way.
-
-**Large tickets.** Pass 1 is skipped when everything fits in `num_ctx`. Otherwise each ticket is analysed
-separately; its conversation is split chronologically into chunks that fit the budget, so no comment is dropped.
-If the per-ticket results still do not fit pass 2, detail is removed from *related* tickets first, never from the root,
-and a warning says what was omitted. A single text longer than `max_text_chars` is clipped in the middle with an explicit marker.
-
-**Determinism.** Temperature 0, top_p 1, fixed seed, explicit `num_ctx`, JSON-schema constrained output, one
-repair retry on invalid JSON, prompts versioned in `prompts.py`.
-
-**Caching and regeneration.** Each run re-fetches the ticket graph (cheap) and compares a fingerprint of every
-ticket's `updated_on` + prompt version + model. Unchanged → cached analysis, no LLM calls. Any ticket in the graph
-changed → analysed again automatically. `--regenerate` forces it. Translations are cached per paragraph.
-Delete the SQLite file (`cache.path`) to reset everything.
-
-**Not silently ignored.** Tickets beyond `max_depth`/`max_tickets`, or that cannot be fetched (no permission, deleted),
-are listed under "Not analysed". Missing information is stated ("none found in ticket data"), not filled in.
-
-## Adding another local LLM
-
-Implement `generate(system, prompt, schema=None) -> str` plus `model_id`, `num_ctx`, `max_output` (see
-`LLMBackend` in `llm.py`), add the class to `BACKENDS`, and set `llm.backend`. Ollama is ~20 lines.
-
-## Tests
+## Development
 
 ```bash
-python -m unittest discover -s tests -v      # no extra packages needed; pytest also works
+python -m unittest discover -s tests -v     # 97 tests, no extra packages needed
+pip install -e ".[dev]" && black .          # formatting: line length 120 (configured in pyproject.toml)
 ```
 
-51 tests: unit tests (extraction, graph traversal and loops, translation, context chunking, config, validation,
-cache invalidation, HTML/XLSX content and escaping) and end-to-end tests that drive the real CLI against a fake
-Redmine (`tests/fixtures/sample_issues.json`: parent, child, blocker, circular relation, Japanese text, MRs, commit,
-branches, attachment) and a fake Ollama endpoint.
+Add another LLM: implement `LanguageModel` (`generate`, `check_ready`, `model_id`, `context_tokens`, `max_output_tokens`) and register it in `BACKENDS`.
 
 ## Limitations (please read)
 
-* **Verified with fakes only.** The test suite never talks to a real Redmine or Ollama. First run against your instance
-  with a ticket you know well and compare the output with it. Check the Ollama request/response shape if your version differs.
-* MR/commit/branch links assume **GitLab** URL layout (`/-/merge_requests/N`). Other hosts need small changes in `extract.py`.
-* Validation covers ticket IDs, MR IDs, commit SHAs and source tags. It cannot verify branch names or prose that merely
-  *sounds* plausible, so treat `confirmed` as "the model cites a real source", and open the linked journal for anything important.
-* Token counts are a conservative character-based estimate, not the model's tokenizer.
-* Translation works per paragraph; a very long single Japanese paragraph is sent to `api.translate` in one piece.
-* Journals are read from the issue endpoint; private notes you cannot see are not available. Attachment contents are never read.
-* Redmine's issue API does not resolve user ids in journal changes (assignee changes show raw ids); status, priority and custom-field names are resolved.
+* **Throughput.** Processing is sequential on purpose (one GPU is the bottleneck). A ticket needs 2 model calls when it fits the
+  context window, otherwise one per related ticket plus 2. 100-200 tickets per day is feasible only if your model answers fast
+  enough; use `keep_alive`, a sensible `num_ctx`, and a low `max_depth` to control cost, and check the audit log timings.
+* MR/commit/branch links assume GitLab URLs (`/-/merge_requests/N`). Validation covers ticket IDs, MR IDs, commit SHAs and source tags;
+  it cannot detect fluent prose that misreads a real ticket, so `confirmed` means "cites a real source", not "verified true".
+* The token estimate is character based, not the model's tokenizer. Redmine does not resolve user ids in journal changes
+  (assignee changes show raw ids); status, priority and custom-field names are resolved.

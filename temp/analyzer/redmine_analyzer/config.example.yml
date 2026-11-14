@@ -1,13 +1,13 @@
-# Copy to config.yml and edit. Values may reference environment variables as ${NAME},
-# so secrets need not be stored in the file:  export REDMINE_API_KEY=...
+# Copy to config.yml and edit.  Values may reference environment variables as ${NAME}.
 # Keep the real file private:  chmod 600 config.yml
 
 redmine:
   url: https://redmine.example.com        # no trailing slash needed
-  api_key: ${REDMINE_API_KEY}             # My account -> API access key
+  api_key: ${REDMINE_API_KEY}             # My account -> API access key (a literal key is fine in a private file)
   timeout: 30                             # seconds per request
   verify_ssl: true                        # false only for self-signed internal servers
   page_size: 100                          # Redmine caps this at 100
+  retries: 3                              # attempts for transient failures (network, 429, 5xx)
 
 git:
   # GitLab *project* URL. Used to link bare "!123", commits and branches:
@@ -16,19 +16,38 @@ git:
   base_url: https://gitlab.example.com/group/project
 
 llm:
-  backend: ollama                         # see llm.py BACKENDS to add others
-  endpoint: http://localhost:11434
-  model: qwen3:27b                        # any tag you pulled, e.g. the Qwen Instruct 27B build
+  backend: ollama                         # see adapters/ollama.py BACKENDS to add others
+  endpoint: http://localhost:11434        # ignored when the SSH option below is used
+  model: qwen3:27b                        # the tag you pulled on the Ollama machine
   num_ctx: 16384                          # context window sent to Ollama; raise if you have VRAM
   max_output_tokens: 3000                 # reserved for the reply when budgeting context
   seed: 42                                # fixed seed + temperature 0 = repeatable output
   timeout: 900                            # seconds; local 27B inference can be slow
   think: null                             # true/false only if your model/Ollama supports it
+  keep_alive: 30m                         # keep the model in GPU memory between tickets
+  retries: 2                              # attempts for connection failures
+
+# Run Ollama on ANOTHER machine. The IP/host, user name and PASSWORD are asked for when a run starts
+# (once per run, password hidden) and are never stored. host/username below are only the defaults
+# offered at the prompt (press Enter to accept). Needs:  pip install -e ".[ssh]"
+# Unattended runs (no terminal) read RMSUM_SSH_HOST / RMSUM_SSH_USER / RMSUM_SSH_PASSWORD instead.
+ssh:
+  enabled: false                          # --ssh / --no-ssh on the command line overrides this
+  host: ""                                # e.g. 192.168.1.50
+  port: 22
+  username: ""                            # e.g. llmuser
+  key_file: ""                            # optional private key (the typed password then unlocks it)
+  remote_host: 127.0.0.1                  # where Ollama listens, as seen from that machine
+  remote_port: 11434
+  trust_unknown_host: false               # false: host must already be in ~/.ssh/known_hosts
+                                          # (run "ssh llmuser@host" once to add it)
 
 translate:
   enabled: true
   module: api                             # importable module exposing translate(text) -> str
   include_original: true                  # also give the model the original Japanese paragraphs
+  batch_chars: 4000                       # texts are sent to translate() in batches up to this size
+  batch_items: 20                         # ... and at most this many texts per call
 
 analysis:
   max_depth: 2                            # hops from the root ticket (parent/child/relations)
@@ -36,11 +55,9 @@ analysis:
   follow_text_refs: false                 # also follow plain "#123" mentions (not just relations)
   max_text_chars: 6000                    # a single description/comment is clipped beyond this
 
-cache:
-  path: ~/.cache/rmsum/cache.db
-
 output:
   dir: ./reports
+  audit_file: audit_log.xlsx              # one row per ticket per run, inside output.dir ("" = off)
 
 logging:
   level: INFO

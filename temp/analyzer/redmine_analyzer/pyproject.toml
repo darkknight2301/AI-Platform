@@ -4,17 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rmsum"
-version = "1.0.0"
+version = "2.0.0"
 description = "Summarise and analyse Redmine tickets with a locally hosted LLM"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "openpyxl>=3.1",   # .xlsx export
-    "pyyaml>=6.0",     # YAML configuration
+    "openpyxl>=3.1",  # .xlsx reports and the Excel audit log
+    "pyyaml>=6.0",    # YAML configuration
 ]
+
+[project.optional-dependencies]
+ssh = ["paramiko>=3.4"]  # only needed when Ollama runs on another machine (ssh.enabled)
+dev = ["black>=24.0"]
 
 [project.scripts]
 rmsum = "rmsum.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.black]
+line-length = 120
+target-version = ["py312"]
